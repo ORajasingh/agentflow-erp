@@ -14,6 +14,7 @@ import {
   Settings,
   ShoppingCart,
   Users,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -54,9 +55,14 @@ const navigation = [
         icon: Boxes,
       },
       {
+        name: "Products",
+        href: "/products",
+        icon: Package,
+      },
+      {
         name: "Procurement",
         href: "/procurement",
-        icon: PackageSearch,
+        icon: ShoppingCart,
       },
       {
         name: "Finance",

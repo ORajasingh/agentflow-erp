@@ -3,6 +3,7 @@ import { Router } from "express";
 import Customer from "../models/Customer.js";
 import Product from "../models/Product.js";
 import SalesOrder from "../models/SalesOrder.js";
+import StockMovement from "../models/StockMovement.js";
 
 const router = Router();
 
@@ -67,6 +68,14 @@ router.get("/:id", async (req, res) => {
 /**
  * POST /api/sales-orders
  * Create a sales order
+ *
+ * This will:
+ * - Validate customer
+ * - Validate products
+ * - Check stock availability
+ * - Reduce inventory
+ * - Create OUT stock movements
+ * - Update customer statistics
  */
 router.post("/", async (req, res) => {
   try {
@@ -76,7 +85,11 @@ router.post("/", async (req, res) => {
       tax = 0,
     } = req.body;
 
-    if (!customerId || !Array.isArray(items) || items.length === 0) {
+    if (
+      !customerId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
       res.status(400).json({
         success: false,
         message:
@@ -101,14 +114,17 @@ router.post("/", async (req, res) => {
     const orderItems = [];
     let subtotal = 0;
 
-    // Validate every product
+    // Validate every product first
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = await Product.findById(
+        item.productId
+      );
 
       if (!product) {
         res.status(404).json({
           success: false,
-          message: `Product ${item.productId} not found`,
+          message:
+            `Product ${item.productId} not found`,
         });
 
         return;
@@ -116,10 +132,14 @@ router.post("/", async (req, res) => {
 
       const quantity = Number(item.quantity);
 
-      if (!Number.isInteger(quantity) || quantity <= 0) {
+      if (
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
         res.status(400).json({
           success: false,
-          message: `Invalid quantity for ${product.name}`,
+          message:
+            `Invalid quantity for ${product.name}`,
         });
 
         return;
@@ -128,7 +148,8 @@ router.post("/", async (req, res) => {
       if (product.stockQuantity < quantity) {
         res.status(400).json({
           success: false,
-          message: `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`,
+          message:
+            `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`,
         });
 
         return;
@@ -153,6 +174,7 @@ router.post("/", async (req, res) => {
 
     const orderNumber = `SO-${Date.now()}`;
 
+    // Create sales order
     const order = await SalesOrder.create({
       orderNumber,
       customer: customer._id,
@@ -165,12 +187,38 @@ router.post("/", async (req, res) => {
       paymentStatus: "Pending",
     });
 
-    // Reduce inventory
+    /**
+     * Reduce inventory and create stock movements
+     */
     for (const item of orderItems) {
-      await Product.findByIdAndUpdate(item.product, {
-        $inc: {
-          stockQuantity: -item.quantity,
-        },
+      const product = await Product.findById(
+        item.product
+      );
+
+      if (!product) {
+        continue;
+      }
+
+      const previousStock = product.stockQuantity;
+      const newStock =
+        previousStock - item.quantity;
+
+      // Reduce inventory
+      product.stockQuantity = newStock;
+
+      await product.save();
+
+      // Create OUT stock movement
+      await StockMovement.create({
+        product: product._id,
+        sku: product.sku,
+        productName: product.name,
+        type: "OUT",
+        quantity: item.quantity,
+        previousStock,
+        newStock,
+        reason: "Sales Order",
+        reference: orderNumber,
       });
     }
 
@@ -184,11 +232,15 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Sales order created successfully",
+      message:
+        "Sales order created and inventory updated successfully",
       data: order,
     });
   } catch (error) {
-    console.error("Failed to create sales order:", error);
+    console.error(
+      "Failed to create sales order:",
+      error
+    );
 
     res.status(400).json({
       success: false,
