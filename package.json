@@ -1,0 +1,21 @@
+{
+  "name": "agentflow-erp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AgentFlow ERP - An Explainable Multi-Agent Enterprise Operating System with Retrieval-Augmented Intelligence",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/web",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:ai": "npm run dev --workspace=apps/ai",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
