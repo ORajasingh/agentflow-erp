@@ -5,7 +5,7 @@ import express from "express";
 import customerRoutes from "./routes/customer.routes.js";
 import { connectDatabase } from "./config/database.js";
 import salesOrderRoutes from "./routes/sales-order.routes.js";
-
+import supplierRoutes from "./routes/supplier.routes.js";
 const app = express();
 
 const PORT = process.env.PORT || 4000;
@@ -20,6 +20,7 @@ app.use(
 app.use(express.json());
 app.use("/api/products", productRoutes);
 app.use("/api/customers", customerRoutes);
+app.use("/api/suppliers", supplierRoutes);
 app.use("/api/sales-orders", salesOrderRoutes);
 
 app.get("/api/health", (_req, res) => {
