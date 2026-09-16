@@ -130,9 +130,10 @@ Available agents:
     res.json({
       success: true,
       data: {
-        message: answer,
-        agent: orchestration.agent,
-      },
+  message: answer,
+  agent: orchestration.agent,
+  agentData: orchestration.data,
+},
     });
   } catch (error: any) {
     console.error(

@@ -16,9 +16,16 @@ import {
   X,
   Wallet,
   ShoppingCart,
+  Package,
+  AlertTriangle,
+  Check,
 } from "lucide-react";
 
 import { useState } from "react";
+
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:4000";
 
 const suggestions = [
   "Which products are running low?",
@@ -37,6 +44,46 @@ type AgentName =
 type Message = {
   role: "user" | "assistant";
   content: string;
+};
+
+type LowStockProduct = {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string;
+  brand: string;
+  currentStock: number;
+  reorderLevel: number;
+  suggestedQuantity: number;
+  unitPrice: number;
+  costPrice: number;
+  warehouse: string;
+  supplier?: string;
+};
+
+type Supplier = {
+  id: string;
+  supplierId: string;
+  companyName: string;
+  contactPerson?: string;
+  category?: string;
+  rating?: number;
+  totalOrders?: number;
+  totalPurchaseValue?: number;
+  status: string;
+};
+
+type PurchaseOrderDraft = {
+  success: boolean;
+  hasLowStock: boolean;
+  message?: string;
+  products: LowStockProduct[];
+  suppliers: Supplier[];
+};
+
+type PendingAction = {
+  type: "CREATE_PURCHASE_ORDER";
+  draft: PurchaseOrderDraft;
 };
 
 const agentInfo: Record<
@@ -100,10 +147,18 @@ export default function AICommandCenterPage() {
   const [lastAgent, setLastAgent] =
     useState<AgentName | null>(null);
 
+  const [pendingAction, setPendingAction] =
+    useState<PendingAction | null>(null);
+
+  const [actionLoading, setActionLoading] =
+    useState(false);
+
   const sendMessage = async (text?: string) => {
     const value = (text ?? message).trim();
 
-    if (!value || loading) return;
+    if (!value || loading || actionLoading) {
+      return;
+    }
 
     const previousHistory = [...messages];
 
@@ -121,7 +176,7 @@ export default function AICommandCenterPage() {
 
     try {
       const response = await fetch(
-        "http://localhost:4000/api/ai/chat",
+        `${API_URL}/api/ai/chat`,
         {
           method: "POST",
           headers: {
@@ -130,20 +185,20 @@ export default function AICommandCenterPage() {
           body: JSON.stringify({
             message: value,
 
-           history: previousHistory
-  .filter(
-    (item) =>
-      item.role === "user" ||
-      item.role === "assistant"
-  )
-  .slice(-10)
-  .map((item) => ({
-    role:
-      item.role === "assistant"
-        ? "model"
-        : "user",
-    content: item.content,
-  })),
+            history: previousHistory
+              .filter(
+                (item) =>
+                  item.role === "user" ||
+                  item.role === "assistant"
+              )
+              .slice(-10)
+              .map((item) => ({
+                role:
+                  item.role === "assistant"
+                    ? "model"
+                    : "user",
+                content: item.content,
+              })),
           }),
         }
       );
@@ -170,18 +225,67 @@ export default function AICommandCenterPage() {
           content: result.data.message,
         },
       ]);
+
+      /*
+       * Detect a purchase-order draft returned
+       * by the Procurement Agent.
+       */
+      const agentData =
+        result.data?.agentData;
+
+      if (
+        selectedAgent === "procurement" &&
+        agentData?.hasLowStock === true &&
+        Array.isArray(agentData?.products) &&
+        agentData.products.length > 0
+      ) {
+        const lowerMessage =
+          value.toLowerCase();
+
+        const isPurchaseAction =
+          lowerMessage.includes(
+            "create purchase order"
+          ) ||
+          lowerMessage.includes(
+            "create a purchase order"
+          ) ||
+          lowerMessage.includes(
+            "prepare purchase order"
+          ) ||
+          lowerMessage.includes(
+            "prepare a purchase order"
+          ) ||
+          lowerMessage.includes("create po") ||
+          lowerMessage.includes("prepare po") ||
+          lowerMessage.includes(
+            "generate purchase order"
+          ) ||
+          lowerMessage.includes("generate po");
+
+        if (isPurchaseAction) {
+          setPendingAction({
+            type: "CREATE_PURCHASE_ORDER",
+            draft: agentData,
+          });
+        }
+      }
     } catch (error) {
       console.error(
         "AI chat error:",
         error
       );
 
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unknown error";
+
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
           content:
-            "Sorry, I couldn't connect to the AI service. Please make sure the API server is running on port 4000.",
+            `AI service error: ${errorMessage}`,
         },
       ]);
     } finally {
@@ -189,10 +293,201 @@ export default function AICommandCenterPage() {
     }
   };
 
+  /*
+   * Confirm and actually create the Purchase Order.
+   */
+  const confirmPurchaseOrder =
+    async () => {
+      if (
+        !pendingAction ||
+        pendingAction.type !==
+          "CREATE_PURCHASE_ORDER"
+      ) {
+        return;
+      }
+
+      const draft =
+        pendingAction.draft;
+
+      if (
+        !draft.products ||
+        draft.products.length === 0
+      ) {
+        return;
+      }
+
+      if (
+        !draft.suppliers ||
+        draft.suppliers.length === 0
+      ) {
+        setMessages((previous) => [
+          ...previous,
+          {
+            role: "assistant",
+            content:
+              "I cannot create the purchase order because there are no active suppliers available.",
+          },
+        ]);
+
+        setPendingAction(null);
+
+        return;
+      }
+
+      setActionLoading(true);
+
+      try {
+        /*
+         * For the first version we use the highest-rated
+         * active supplier returned by the Procurement Agent.
+         */
+        const supplier =
+          [...draft.suppliers].sort(
+            (a, b) =>
+              (b.rating ?? 0) -
+              (a.rating ?? 0)
+          )[0];
+
+        const items =
+          draft.products.map(
+            (product) => ({
+              productId:
+                product.productId,
+
+              quantity:
+                product.suggestedQuantity,
+
+              /*
+               * Use cost price for procurement.
+               */
+              unitPrice:
+                product.costPrice ??
+                product.unitPrice ??
+                0,
+            })
+          );
+
+        const response =
+          await fetch(
+            `${API_URL}/api/purchase-orders`,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                supplierId:
+                  supplier.id,
+
+                items,
+                tax: 0,
+              }),
+            }
+          );
+
+        const result =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !result.success
+        ) {
+          throw new Error(
+            result.message ||
+              "Failed to create purchase order"
+          );
+        }
+
+        const order =
+          result.data;
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            role: "assistant",
+            content:
+              `✅ Purchase order created successfully.
+
+Purchase Order: ${
+                order?.orderNumber ||
+                "Created"
+              }
+
+Supplier: ${
+                order?.supplierName ||
+                supplier.companyName
+              }
+
+Products: ${
+                draft.products.length
+              }
+
+Total Amount: ₹${Number(
+                order?.totalAmount || 0
+              ).toLocaleString("en-IN")}
+
+Status: ${
+                order?.status ||
+                "Pending"
+              }
+
+The purchase order is now available in Procurement.`,
+          },
+        ]);
+
+        setPendingAction(null);
+      } catch (error) {
+        console.error(
+          "Purchase order action error:",
+          error
+        );
+
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Failed to create purchase order";
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            role: "assistant",
+            content:
+              `❌ Purchase order could not be created.
+
+${errorMessage}`,
+          },
+        ]);
+      } finally {
+        setActionLoading(false);
+      }
+    };
+
+  /*
+   * Cancel pending action.
+   */
+  const cancelAction = () => {
+    setPendingAction(null);
+
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content:
+          "Purchase order creation cancelled. No ERP data was changed.",
+      },
+    ]);
+  };
+
   const getAgentStatus = (
     agent: AgentName
   ) => {
-    if (loading && activeAgent === agent) {
+    if (
+      loading &&
+      activeAgent === agent
+    ) {
       return "active";
     }
 
@@ -211,6 +506,7 @@ export default function AICommandCenterPage() {
       <div className="mx-auto flex min-h-full max-w-7xl flex-col p-6 lg:p-8">
 
         {/* Header */}
+
         <div className="flex flex-col gap-4 border-b border-slate-800 pb-6 sm:flex-row sm:items-center sm:justify-between">
 
           <div className="flex items-center gap-4">
@@ -242,6 +538,7 @@ export default function AICommandCenterPage() {
               </p>
 
             </div>
+
           </div>
 
           <div className="flex items-center gap-2 rounded-full border border-emerald-900/50 bg-emerald-950/30 px-3 py-1.5">
@@ -257,12 +554,15 @@ export default function AICommandCenterPage() {
         </div>
 
         {/* Main */}
+
         <div className="grid flex-1 gap-6 py-6 lg:grid-cols-3">
 
           {/* Chat */}
+
           <section className="flex min-h-[650px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 lg:col-span-2">
 
             {/* Chat Header */}
+
             <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
 
               <div className="flex items-center gap-3">
@@ -291,6 +591,7 @@ export default function AICommandCenterPage() {
                 onClick={() => {
                   setMessages([]);
                   setLastAgent(null);
+                  setPendingAction(null);
                 }}
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 transition hover:bg-slate-900 hover:text-slate-300"
               >
@@ -301,6 +602,7 @@ export default function AICommandCenterPage() {
             </div>
 
             {/* Messages */}
+
             <div className="flex-1 overflow-y-auto p-5">
 
               {messages.length === 0 ? (
@@ -316,9 +618,11 @@ export default function AICommandCenterPage() {
                   </h2>
 
                   <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                    Ask Gideon about sales, inventory,
-                    procurement, finance, customers,
-                    employees, or enterprise documents.
+                    Ask Gideon about sales,
+                    inventory, procurement,
+                    finance, customers,
+                    employees, or enterprise
+                    documents.
                   </p>
 
                   <div className="mt-7 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
@@ -334,7 +638,10 @@ export default function AICommandCenterPage() {
                               suggestion
                             )
                           }
-                          disabled={loading}
+                          disabled={
+                            loading ||
+                            actionLoading
+                          }
                           className="group rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-left transition hover:border-violet-800 hover:bg-violet-950/20 disabled:opacity-50"
                         >
 
@@ -438,7 +745,205 @@ export default function AICommandCenterPage() {
 
             </div>
 
+            {/* Purchase Order Confirmation */}
+
+            {pendingAction?.type ===
+              "CREATE_PURCHASE_ORDER" && (
+
+              <div className="border-t border-amber-900/40 bg-amber-950/10 p-4">
+
+                <div className="rounded-2xl border border-amber-900/50 bg-slate-950 p-5">
+
+                  <div className="flex items-start gap-3">
+
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-950 text-amber-400">
+
+                      <AlertTriangle
+                        size={20}
+                      />
+
+                    </div>
+
+                    <div className="flex-1">
+
+                      <h3 className="text-sm font-semibold text-white">
+                        Purchase Order Confirmation
+                      </h3>
+
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        Gideon is ready to create
+                        a purchase order. Review
+                        the details before confirming.
+                      </p>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+
+                    {pendingAction.draft.products.map(
+                      (product) => (
+
+                        <div
+                          key={product.productId}
+                          className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"
+                        >
+
+                          <div className="flex items-center justify-between gap-3">
+
+                            <div className="flex items-center gap-3">
+
+                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-950 text-violet-400">
+
+                                <Package
+                                  size={16}
+                                />
+
+                              </div>
+
+                              <div>
+
+                                <p className="text-xs font-medium text-white">
+                                  {product.name}
+                                </p>
+
+                                <p className="text-[10px] text-slate-600">
+                                  {product.sku}
+                                </p>
+
+                              </div>
+
+                            </div>
+
+                            <div className="text-right">
+
+                              <p className="text-xs font-semibold text-amber-400">
+                                +
+                                {
+                                  product.suggestedQuantity
+                                }{" "}
+                                units
+                              </p>
+
+                              <p className="text-[10px] text-slate-600">
+                                Stock:{" "}
+                                {
+                                  product.currentStock
+                                }{" "}
+                                / Reorder:{" "}
+                                {
+                                  product.reorderLevel
+                                }
+                              </p>
+
+                            </div>
+
+                          </div>
+
+                        </div>
+
+                      )
+                    )}
+
+                  </div>
+
+                  <div className="mt-4 rounded-xl bg-slate-900 p-3">
+
+                    <div className="flex items-center justify-between text-xs">
+
+                      <span className="text-slate-500">
+                        Products
+                      </span>
+
+                      <span className="font-medium text-white">
+                        {
+                          pendingAction.draft
+                            .products.length
+                        }
+                      </span>
+
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between text-xs">
+
+                      <span className="text-slate-500">
+                        Supplier
+                      </span>
+
+                      <span className="font-medium text-white">
+                        {
+                          pendingAction.draft
+                            .suppliers?.[0]
+                            ?.companyName ||
+                          "No supplier"
+                        }
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-4 flex gap-3">
+
+                    <button
+                      type="button"
+                      onClick={
+                        confirmPurchaseOrder
+                      }
+                      disabled={
+                        actionLoading
+                      }
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                    >
+
+                      {actionLoading ? (
+                        <Loader2
+                          size={15}
+                          className="animate-spin"
+                        />
+                      ) : (
+                        <Check size={15} />
+                      )}
+
+                      {actionLoading
+                        ? "Creating..."
+                        : "Confirm & Create PO"}
+
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={
+                        cancelAction
+                      }
+                      disabled={
+                        actionLoading
+                      }
+                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-5 py-3 text-xs font-semibold text-slate-400 transition hover:bg-slate-900 hover:text-white disabled:opacity-50"
+                    >
+
+                      <X size={15} />
+
+                      Cancel
+
+                    </button>
+
+                  </div>
+
+                  <p className="mt-3 text-center text-[10px] text-slate-600">
+                    No ERP data will change until
+                    you confirm.
+                  </p>
+
+                </div>
+
+              </div>
+
+            )}
+
             {/* Input */}
+
             <div className="border-t border-slate-800 p-4">
 
               <div className="flex items-end gap-3 rounded-xl border border-slate-800 bg-slate-900 p-2 focus-within:border-violet-700">
@@ -463,7 +968,10 @@ export default function AICommandCenterPage() {
                   }}
                   placeholder="Ask Gideon anything about your business..."
                   rows={1}
-                  disabled={loading}
+                  disabled={
+                    loading ||
+                    actionLoading
+                  }
                   className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-slate-600 disabled:opacity-50"
                 />
 
@@ -474,10 +982,12 @@ export default function AICommandCenterPage() {
                   }
                   disabled={
                     !message.trim() ||
-                    loading
+                    loading ||
+                    actionLoading
                   }
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
+
                   {loading ? (
                     <Loader2
                       size={17}
@@ -486,13 +996,15 @@ export default function AICommandCenterPage() {
                   ) : (
                     <Send size={17} />
                   )}
+
                 </button>
 
               </div>
 
               <p className="mt-2 text-center text-[10px] text-slate-700">
-                Gideon can make mistakes. Verify important business
-                decisions before execution.
+                Gideon can make mistakes. Verify
+                important business decisions before
+                execution.
               </p>
 
             </div>
@@ -500,9 +1012,11 @@ export default function AICommandCenterPage() {
           </section>
 
           {/* Right Panel */}
+
           <aside className="space-y-6">
 
             {/* Agent Status */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
               <div className="flex items-center gap-3">
@@ -662,6 +1176,7 @@ export default function AICommandCenterPage() {
             </section>
 
             {/* Capabilities */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
               <h2 className="text-sm font-semibold text-white">
@@ -678,7 +1193,7 @@ export default function AICommandCenterPage() {
                   "Customer insights",
                   "Enterprise document search",
                   "Business recommendations",
-                  "Explainable decisions",
+                  "Purchase order preparation",
                 ].map(
                   (capability) => (
 
@@ -704,6 +1219,7 @@ export default function AICommandCenterPage() {
             </section>
 
             {/* Activity */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
               <div className="flex items-center gap-3">
