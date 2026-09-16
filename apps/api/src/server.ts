@@ -9,6 +9,9 @@ import supplierRoutes from "./routes/supplier.routes.js";
 import purchaseOrderRoutes from "./routes/purchase-order.routes.js";
 import stockMovementRoutes from "./routes/stock-movement.routes.js";
 import inventoryAdjustmentRoutes from "./routes/inventory-adjustment.routes.js";
+import financeRoutes from "./routes/finance.routes.js";
+import aiRoutes from "./routes/ai.routes.js";
+import aiChatRoutes from "./routes/ai-chat.routes.js";
 
 const app = express();
 
@@ -28,6 +31,9 @@ app.use(express.json());
 app.use("/api/products", productRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/suppliers", supplierRoutes);
+app.use("/api/finance", financeRoutes);
+app.use("/api/ai/chat", aiChatRoutes);
+app.use("/api/ai", aiRoutes);
 app.use("/api/sales-orders", salesOrderRoutes);
 app.use(
   "/api/purchase-orders",

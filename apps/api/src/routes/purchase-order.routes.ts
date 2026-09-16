@@ -4,6 +4,7 @@ import Product from "../models/Product.js";
 import PurchaseOrder from "../models/PurchaseOrder.js";
 import StockMovement from "../models/StockMovement.js";
 import Supplier from "../models/Supplier.js";
+import FinanceTransaction from "../models/FinanceTransaction.js";
 
 const router = Router();
 
@@ -413,6 +414,29 @@ router.patch("/:id/receive", async (req, res) => {
         },
       }
     );
+
+    // Create finance expense transaction
+await FinanceTransaction.create({
+  transactionId: `TXN-${Date.now()}-${Math.floor(
+    Math.random() * 1000
+  )}`,
+
+  type: "Expense",
+
+  category: "Purchase",
+
+  description: `Purchase order ${order.orderNumber} - ${order.supplierName}`,
+
+  amount: order.totalAmount,
+
+  reference: order.orderNumber,
+
+  relatedOrder: order._id,
+
+  paymentStatus: order.paymentStatus,
+
+  transactionDate: new Date(),
+});
 
     // Mark PO as received
     order.status = "Received";

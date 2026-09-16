@@ -60,8 +60,8 @@ const navigation = [
         icon: Package,
       },
       {
-        name: "Procurement",
-        href: "/procurement",
+         name: "Purchase Orders",
+        href: "/purchase-orders",
         icon: ShoppingCart,
       },
       {

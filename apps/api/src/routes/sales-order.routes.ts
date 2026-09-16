@@ -4,6 +4,7 @@ import Customer from "../models/Customer.js";
 import Product from "../models/Product.js";
 import SalesOrder from "../models/SalesOrder.js";
 import StockMovement from "../models/StockMovement.js";
+import FinanceTransaction from "../models/FinanceTransaction.js";
 
 const router = Router();
 
@@ -186,6 +187,29 @@ router.post("/", async (req, res) => {
       status: "Confirmed",
       paymentStatus: "Pending",
     });
+
+    // Create finance income transaction
+await FinanceTransaction.create({
+  transactionId: `TXN-${Date.now()}-${Math.floor(
+    Math.random() * 1000
+  )}`,
+
+  type: "Income",
+
+  category: "Sales",
+
+  description: `Sales order ${orderNumber} - ${customer.companyName}`,
+
+  amount: totalAmount,
+
+  reference: orderNumber,
+
+  relatedOrder: order._id,
+
+  paymentStatus: "Pending",
+
+  transactionDate: new Date(),
+});
 
     /**
      * Reduce inventory and create stock movements
