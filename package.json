@@ -17,5 +17,14 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.0",
+    "mammoth": "^1.12.3",
+    "multer": "^2.4.0",
+    "pdf-parse": "^2.4.5"
+  },
+  "devDependencies": {
+    "@types/multer": "^2.2.0"
   }
 }

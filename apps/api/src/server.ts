@@ -12,6 +12,7 @@ import inventoryAdjustmentRoutes from "./routes/inventory-adjustment.routes.js";
 import financeRoutes from "./routes/finance.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
 import aiChatRoutes from "./routes/ai-chat.routes.js";
+import knowledgeRoutes from "./routes/knowledge.routes.js";
 
 const app = express();
 
@@ -34,6 +35,10 @@ app.use("/api/suppliers", supplierRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/ai/chat", aiChatRoutes);
 app.use("/api/ai", aiRoutes);
+app.use(
+  "/api/knowledge",
+  knowledgeRoutes
+);
 app.use("/api/sales-orders", salesOrderRoutes);
 app.use(
   "/api/purchase-orders",
