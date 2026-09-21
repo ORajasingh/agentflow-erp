@@ -1,13 +1,13 @@
 import { getInventoryInsights } from "../agents/inventory.agent.js";
 import { getSalesInsights } from "../agents/sales.agent.js";
 import { getFinanceInsights } from "../agents/finance.agent.js";
-
 import {
   getProcurementInsights,
-  getLowStockProducts,
-  getActiveSuppliers,
-  preparePurchaseOrderDraft,
 } from "../agents/procurement.agent.js";
+
+// ============================================================
+// TYPES
+// ============================================================
 
 export type AgentName =
   | "inventory"
@@ -16,70 +16,31 @@ export type AgentName =
   | "procurement"
   | "general";
 
+export type ActionName =
+  | "create_purchase_order"
+  | "none";
+
+export interface DetectedAction {
+  name: ActionName;
+  confidence: "high" | "medium" | "low";
+}
+
 export interface OrchestratorResult {
   agent: AgentName;
   data: unknown;
+  action: DetectedAction;
 }
 
-/**
- * Detect which ERP agent should handle the request.
- */
+// ============================================================
+// AGENT DETECTION
+// ============================================================
+
 export function detectAgent(
   message: string
 ): AgentName {
   const text = message
     .toLowerCase()
     .trim();
-
-  // ----------------------------------------
-  // PROCUREMENT ACTIONS
-  // ----------------------------------------
-  // These must be checked BEFORE inventory
-  // because purchase-order requests may also
-  // contain words like "stock" or "product".
-  // ----------------------------------------
-
-  if (
-    text.includes("create purchase order") ||
-    text.includes("create a purchase order") ||
-    text.includes("make purchase order") ||
-    text.includes("make a purchase order") ||
-    text.includes("generate purchase order") ||
-    text.includes("generate a purchase order") ||
-    text.includes("prepare purchase order") ||
-    text.includes("prepare a purchase order") ||
-    text.includes("create po") ||
-    text.includes("create a po") ||
-    text.includes("generate po") ||
-    text.includes("generate a po") ||
-    text.includes("prepare po") ||
-    text.includes("prepare a po")
-  ) {
-    return "procurement";
-  }
-
-  // ----------------------------------------
-  // PROCUREMENT
-  // ----------------------------------------
-
-  if (
-    text.includes("procurement") ||
-    text.includes("purchase") ||
-    text.includes("purchases") ||
-    text.includes("purchase order") ||
-    text.includes("purchase orders") ||
-    text.includes("supplier") ||
-    text.includes("suppliers") ||
-    text.includes("vendor") ||
-    text.includes("vendors") ||
-    text.includes("buy") ||
-    text.includes("buying") ||
-    text.includes("ordered") ||
-    text.includes("ordering") ||
-    text.includes("received goods")
-  ) {
-    return "procurement";
-  }
 
   // ----------------------------------------
   // INVENTORY
@@ -152,92 +113,123 @@ export function detectAgent(
     return "finance";
   }
 
+  // ----------------------------------------
+  // PROCUREMENT
+  // ----------------------------------------
+
+  if (
+    text.includes("procurement") ||
+    text.includes("purchase") ||
+    text.includes("purchases") ||
+    text.includes("purchase order") ||
+    text.includes("purchase orders") ||
+    text.includes("supplier") ||
+    text.includes("suppliers") ||
+    text.includes("supplier") ||
+    text.includes("vendor") ||
+    text.includes("vendors") ||
+    text.includes("buy") ||
+    text.includes("buying") ||
+    text.includes("ordered") ||
+    text.includes("ordering") ||
+    text.includes("received goods")
+  ) {
+    return "procurement";
+  }
+
   return "general";
 }
 
-/**
- * Run the appropriate ERP agent.
- */
-export async function runAgent(
-  agent: AgentName,
-  message = ""
-): Promise<unknown> {
+// ============================================================
+// ACTION DETECTION
+// ============================================================
+
+export function detectAction(
+  message: string
+): DetectedAction {
   const text = message
     .toLowerCase()
     .trim();
 
-  switch (agent) {
-    // ----------------------------------------
-    // INVENTORY
-    // ----------------------------------------
+  // ----------------------------------------
+  // CREATE PURCHASE ORDER
+  // ----------------------------------------
 
+  const purchaseOrderAction =
+    text.includes("create purchase order") ||
+    text.includes("create a purchase order") ||
+    text.includes("create po") ||
+    text.includes("create a po") ||
+    text.includes("make purchase order") ||
+    text.includes("make a purchase order") ||
+    text.includes("make po") ||
+    text.includes("make a po") ||
+    text.includes("raise purchase order") ||
+    text.includes("raise a purchase order") ||
+    text.includes("raise po") ||
+    text.includes("raise a po") ||
+    text.includes("generate purchase order") ||
+    text.includes("generate a purchase order") ||
+    text.includes("generate po") ||
+    text.includes("generate a po") ||
+    text.includes("place purchase order") ||
+    text.includes("place a purchase order") ||
+    text.includes("place po") ||
+    text.includes("place a po");
+
+  if (purchaseOrderAction) {
+    return {
+      name: "create_purchase_order",
+      confidence: "high",
+    };
+  }
+
+  // ----------------------------------------
+  // BUY / ORDER PRODUCT
+  // ----------------------------------------
+
+  const buyingAction =
+    text.startsWith("buy ") ||
+    text.startsWith("buying ") ||
+    text.startsWith("order ") ||
+    text.startsWith("purchase ");
+
+  if (buyingAction) {
+    return {
+      name: "create_purchase_order",
+      confidence: "medium",
+    };
+  }
+
+  // ----------------------------------------
+  // NO ACTION
+  // ----------------------------------------
+
+  return {
+    name: "none",
+    confidence: "high",
+  };
+}
+
+// ============================================================
+// RUN READ-ONLY AGENT
+// ============================================================
+
+export async function runAgent(
+  agent: AgentName
+): Promise<unknown> {
+  switch (agent) {
     case "inventory":
       return await getInventoryInsights();
-
-    // ----------------------------------------
-    // SALES
-    // ----------------------------------------
 
     case "sales":
       return await getSalesInsights();
 
-    // ----------------------------------------
-    // FINANCE
-    // ----------------------------------------
-
     case "finance":
       return await getFinanceInsights();
 
-    // ----------------------------------------
-    // PROCUREMENT
-    // ----------------------------------------
-
-    case "procurement": {
-      // Purchase-order preparation request
-      if (
-        text.includes("prepare purchase order") ||
-        text.includes("prepare a purchase order") ||
-        text.includes("prepare po") ||
-        text.includes("prepare a po") ||
-        text.includes("create purchase order") ||
-        text.includes("create a purchase order") ||
-        text.includes("create po") ||
-        text.includes("create a po") ||
-        text.includes("generate purchase order") ||
-        text.includes("generate a purchase order") ||
-        text.includes("generate po") ||
-        text.includes("generate a po")
-      ) {
-        return await preparePurchaseOrderDraft();
-      }
-
-      // Supplier-related requests
-      if (
-        text.includes("supplier") ||
-        text.includes("suppliers") ||
-        text.includes("vendor") ||
-        text.includes("vendors")
-      ) {
-        return await getActiveSuppliers();
-      }
-
-      // Low-stock procurement analysis
-      if (
-        text.includes("low stock") ||
-        text.includes("low-stock") ||
-        text.includes("running low") ||
-        text.includes("reorder")
-      ) {
-        return await getLowStockProducts();
-      }
-
-      // General procurement questions
+    case "procurement":
       return await getProcurementInsights();
-    }
-
-    // ----------------------------------------
-    // GENERAL
-    // ----------------------------------------
 
     case "general":
     default:
@@ -245,25 +237,61 @@ export async function runAgent(
   }
 }
 
-/**
- * Main orchestrator.
- */
+// ============================================================
+// ORCHESTRATOR
+// ============================================================
+
 export async function orchestrate(
   message: string
 ): Promise<OrchestratorResult> {
-  const agent = detectAgent(message);
+  const cleanMessage =
+    message.trim();
+
+  if (!cleanMessage) {
+    throw new Error(
+      "Message cannot be empty"
+    );
+  }
+
+  // ----------------------------------------
+  // Detect agent
+  // ----------------------------------------
+
+  const agent =
+    detectAgent(cleanMessage);
+
+  // ----------------------------------------
+  // Detect requested action
+  // ----------------------------------------
+
+  const action =
+    detectAction(cleanMessage);
 
   console.log(
-    `🧠 Orchestrator: "${message}" → ${agent}`
+    `🧠 Orchestrator: "${cleanMessage}" → agent=${agent}, action=${action.name}`
   );
 
-  const data = await runAgent(
-    agent,
-    message
-  );
+  // ----------------------------------------
+  // Run the selected READ-ONLY agent
+  //
+  // IMPORTANT:
+  // Action detection does NOT execute the
+  // write operation.
+  //
+  // create_purchase_order is handled later
+  // by the confirmation/action layer.
+  // ----------------------------------------
+
+  const data =
+    await runAgent(agent);
+
+  // ----------------------------------------
+  // Return orchestration result
+  // ----------------------------------------
 
   return {
     agent,
     data,
+    action,
   };
 }
