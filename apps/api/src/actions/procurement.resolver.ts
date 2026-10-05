@@ -1,416 +1,149 @@
 import Product from "../models/Product.js";
 import Supplier from "../models/Supplier.js";
 
-export interface ResolvedPurchaseOrderItem {
-  productId: string;
+export interface ResolvePurchaseOrderInput {
   productName: string;
-  sku: string;
   quantity: number;
-  unitPrice: number;
 }
 
-export interface ResolvedPurchaseOrder {
-  supplierId: string;
-  supplierName: string;
-  items: ResolvedPurchaseOrderItem[];
-  tax: number;
-  subtotal: number;
-  totalAmount: number;
-  requiresApproval: boolean;
-}
-
-export interface ResolvePurchaseOrderResult {
+export interface ProcurementResolutionResult {
   success: boolean;
   resolved: boolean;
   message: string;
-  order?: ResolvedPurchaseOrder;
-}
 
-// ============================================================
-// EXTRACT QUANTITY
-// ============================================================
-
-function extractQuantity(
-  message: string
-): number | null {
-  const patterns = [
-    /(?:for|quantity|qty)\s+(\d+)/i,
-    /(\d+)\s+(?:units?|items?|products?|laptops?|pcs?)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match =
-      message.match(pattern);
-
-    if (match) {
-      const quantity =
-        Number(match[1]);
-
-      if (
-        Number.isInteger(quantity) &&
-        quantity > 0
-      ) {
-        return quantity;
-      }
-    }
-  }
-
-  return null;
-}
-
-// ============================================================
-// FIND PRODUCT
-// ============================================================
-
-async function findProduct(
-  message: string
-) {
-  const text =
-    message
-      .toLowerCase()
-      .trim();
-
-  const products =
-    await Product.find({
-      isActive: true,
-    });
-
-  // ----------------------------------------
-  // Exact product / SKU match
-  // ----------------------------------------
-
-  const exactMatches =
-    products.filter((product) => {
-      const name =
-        String(product.name || "")
-          .toLowerCase();
-
-      const sku =
-        String(product.sku || "")
-          .toLowerCase();
-
-      return (
-        text.includes(name) ||
-        text.includes(sku)
-      );
-    });
-
-  if (exactMatches.length === 1) {
-    return {
-      type: "single" as const,
-      product: exactMatches[0],
-    };
-  }
-
-  if (exactMatches.length > 1) {
-    return {
-      type: "multiple" as const,
-      products: exactMatches,
-    };
-  }
-
-  // ----------------------------------------
-  // Token fallback
-  // ----------------------------------------
-
-  const words =
-    text
-      .split(/\s+/)
-      .map((word) =>
-        word.replace(
-          /[^a-zA-Z0-9-]/g,
-          ""
-        )
-      )
-      .filter(
-        (word) =>
-          word.length >= 3
-      );
-
-  const tokenMatches =
-    products.filter((product) => {
-      const name =
-        String(product.name || "")
-          .toLowerCase();
-
-      const sku =
-        String(product.sku || "")
-          .toLowerCase();
-
-      return words.some(
-        (word) =>
-          name.includes(word) ||
-          sku.includes(word)
-      );
-    });
-
-  if (tokenMatches.length === 1) {
-    return {
-      type: "single" as const,
-      product: tokenMatches[0],
-    };
-  }
-
-  if (tokenMatches.length > 1) {
-    return {
-      type: "multiple" as const,
-      products: tokenMatches,
-    };
-  }
-
-  return {
-    type: "none" as const,
+  product?: {
+    id: unknown;
+    name: string;
+    sku: string;
+    price: number;
+    quantity: number;
   };
-}
 
-// ============================================================
-// FIND SUPPLIER
-// ============================================================
-
-async function findSupplier(
-  message: string,
-  productSupplier?: string
-) {
-  const suppliers =
-    await Supplier.find({
-      status: "Active",
-    });
-
-  // ----------------------------------------
-  // 1. Use supplier stored on product
-  // ----------------------------------------
-
-  if (productSupplier) {
-    const normalizedProductSupplier =
-      productSupplier
-        .trim()
-        .toLowerCase();
-
-    const productSupplierMatches =
-      suppliers.filter(
-        (supplier) => {
-          const companyName =
-            String(
-              supplier.companyName || ""
-            )
-              .trim()
-              .toLowerCase();
-
-          return (
-            companyName ===
-              normalizedProductSupplier ||
-            companyName.includes(
-              normalizedProductSupplier
-            ) ||
-            normalizedProductSupplier.includes(
-              companyName
-            )
-          );
-        }
-      );
-
-    if (
-      productSupplierMatches.length ===
-      1
-    ) {
-      return {
-        type: "single" as const,
-        supplier:
-          productSupplierMatches[0],
-      };
-    }
-
-    if (
-      productSupplierMatches.length > 1
-    ) {
-      return {
-        type: "multiple" as const,
-        suppliers:
-          productSupplierMatches,
-      };
-    }
-  }
-
-  // ----------------------------------------
-  // 2. Look for explicit supplier
-  //    in user's message
-  // ----------------------------------------
-
-  const text =
-    message
-      .toLowerCase()
-      .trim();
-
-  const explicitMatches =
-    suppliers.filter(
-      (supplier) => {
-        const companyName =
-          String(
-            supplier.companyName || ""
-          )
-            .trim()
-            .toLowerCase();
-
-        return text.includes(
-          companyName
-        );
-      }
-    );
-
-  if (
-    explicitMatches.length === 1
-  ) {
-    return {
-      type: "single" as const,
-      supplier:
-        explicitMatches[0],
-    };
-  }
-
-  if (
-    explicitMatches.length > 1
-  ) {
-    return {
-      type: "multiple" as const,
-      suppliers:
-        explicitMatches,
-    };
-  }
-
-  return {
-    type: "none" as const,
+  supplier?: {
+    id: unknown;
+    name: string;
   };
+
+  totalAmount?: number;
+  requiresApproval?: boolean;
 }
 
-// ============================================================
-// RESOLVE PURCHASE ORDER
-// ============================================================
-
+/**
+ * Resolve a purchase-order request.
+ *
+ * Flow:
+ *
+ * User request
+ *     ↓
+ * Find product
+ *     ↓
+ * Find supplier assigned to product
+ *     ↓
+ * Verify supplier is active
+ *     ↓
+ * Calculate total
+ *     ↓
+ * Check ₹50,000 approval threshold
+ */
 export async function resolvePurchaseOrder(
-  message: string
-): Promise<ResolvePurchaseOrderResult> {
+  productName: string,
+  quantity: number
+): Promise<ProcurementResolutionResult> {
+  // ----------------------------------------
+  // Validate product name
+  // ----------------------------------------
+
+  if (!productName?.trim()) {
+    return {
+      success: false,
+      resolved: false,
+      message: "Product name is required.",
+    };
+  }
+
+  // ----------------------------------------
+  // Validate quantity
+  // ----------------------------------------
+
+  const numericQuantity = Number(quantity);
+
   if (
-    !message ||
-    !message.trim()
+    !Number.isInteger(numericQuantity) ||
+    numericQuantity <= 0
   ) {
     return {
       success: false,
       resolved: false,
       message:
-        "Purchase order request is empty.",
+        "Quantity must be a positive whole number.",
     };
   }
 
   // ----------------------------------------
-  // Quantity
+  // Find product
   // ----------------------------------------
 
-  const quantity =
-    extractQuantity(message);
+  const product = await Product.findOne({
+    name: {
+      $regex: escapeRegex(productName.trim()),
+      $options: "i",
+    },
 
-  if (quantity === null) {
+    isActive: true,
+  });
+
+  if (!product) {
     return {
-      success: true,
+      success: false,
       resolved: false,
       message:
-        "How many units should I include in the purchase order?",
+        `I could not find an active product matching "${productName}".`,
     };
   }
 
   // ----------------------------------------
-  // Product
+  // Get supplier name from product
   // ----------------------------------------
 
-  const productResult =
-    await findProduct(message);
+  const supplierName =
+    product.supplier?.trim();
 
-  if (
-    productResult.type === "none"
-  ) {
+  if (!supplierName) {
     return {
-      success: true,
+      success: false,
       resolved: false,
       message:
-        "I could not identify the product. Please provide the exact product name or SKU.",
+        `I found ${product.name}, but this product does not have a supplier assigned.`,
     };
   }
 
-  if (
-    productResult.type === "multiple"
-  ) {
-    const names =
-      productResult.products
-        .map(
-          (product) =>
-            `${product.name} (${product.sku})`
-        )
-        .join(", ");
+  // ----------------------------------------
+  // Find active supplier
+  // ----------------------------------------
 
+  const supplier = await Supplier.findOne({
+    companyName: {
+      $regex: `^${escapeRegex(supplierName)}$`,
+      $options: "i",
+    },
+
+    status: "Active",
+  });
+
+  if (!supplier) {
     return {
-      success: true,
+      success: false,
       resolved: false,
       message:
-        `I found multiple matching products: ${names}. Please specify which product you want.`,
+        `I found ${product.name}, but I could not identify an active supplier named "${supplierName}". Please specify the supplier.`,
     };
   }
 
-  const product =
-    productResult.product;
-
   // ----------------------------------------
-  // Supplier
+  // Validate product price
   // ----------------------------------------
 
-  const supplierResult =
-    await findSupplier(
-      message,
-      product.supplier
-    );
-
-  if (
-    supplierResult.type === "none"
-  ) {
-    return {
-      success: true,
-      resolved: false,
-      message:
-        `I found ${product.name}, but I could not identify an active supplier. Please specify the supplier.`,
-    };
-  }
-
-  if (
-    supplierResult.type === "multiple"
-  ) {
-    const names =
-      supplierResult.suppliers
-        .map(
-          (supplier) =>
-            supplier.companyName
-        )
-        .join(", ");
-
-    return {
-      success: true,
-      resolved: false,
-      message:
-        `I found multiple active suppliers: ${names}. Please specify which supplier you want.`,
-    };
-  }
-
-  const supplier =
-    supplierResult.supplier;
-
-  // ----------------------------------------
-  // Price
-  //
-  // Keep the same business rule as
-  // createPurchaseOrder().
-  //
-  // It currently uses product.price.
-  // ----------------------------------------
-
-  const unitPrice =
-    Number(product.price);
+  const unitPrice = Number(product.price);
 
   if (
     !Number.isFinite(unitPrice) ||
@@ -420,88 +153,69 @@ export async function resolvePurchaseOrder(
       success: false,
       resolved: false,
       message:
-        `The price for ${product.name} is invalid or unavailable.`,
+        `The product ${product.name} has an invalid price.`,
     };
   }
 
   // ----------------------------------------
-  // Calculate totals
+  // Calculate total
   // ----------------------------------------
 
-  const subtotal =
-    quantity * unitPrice;
-
-  const tax = 0;
-
   const totalAmount =
-    subtotal + tax;
+    numericQuantity * unitPrice;
+
+  // ----------------------------------------
+  // Approval policy
+  // ----------------------------------------
 
   const requiresApproval =
     totalAmount > 50000;
 
   // ----------------------------------------
-  // Build resolved order
+  // Return resolved purchase order
   // ----------------------------------------
-
-  const order: ResolvedPurchaseOrder =
-    {
-      supplierId:
-        String(supplier._id),
-
-      supplierName:
-        supplier.companyName,
-
-      items: [
-        {
-          productId:
-            String(product._id),
-
-          productName:
-            product.name,
-
-          sku:
-            product.sku,
-
-          quantity,
-
-          unitPrice,
-        },
-      ],
-
-      tax,
-
-      subtotal,
-
-      totalAmount,
-
-      requiresApproval,
-    };
-
-  // ----------------------------------------
-  // Confirmation message
-  // ----------------------------------------
-
-  const approvalMessage =
-    requiresApproval
-      ? "\n\n⚠️ This purchase order will require manager approval because the total exceeds ₹50,000."
-      : "";
 
   return {
     success: true,
+
     resolved: true,
 
-    message:
-      `I found the following purchase order:\n\n` +
-      `Supplier: ${supplier.companyName}\n` +
-      `Product: ${product.name}\n` +
-      `SKU: ${product.sku}\n` +
-      `Quantity: ${quantity}\n` +
-      `Unit price: ₹${unitPrice.toLocaleString("en-IN")}\n` +
-      `Subtotal: ₹${subtotal.toLocaleString("en-IN")}\n` +
-      `Total: ₹${totalAmount.toLocaleString("en-IN")}` +
-      approvalMessage +
-      `\n\nWould you like me to create this purchase order?`,
+    product: {
+      id: product._id,
+      name: product.name,
+      sku: product.sku,
+      price: unitPrice,
+      quantity: numericQuantity,
+    },
 
-    order,
+    supplier: {
+      id: supplier._id,
+      name: supplier.companyName,
+    },
+
+    totalAmount,
+
+    requiresApproval,
+
+    message: requiresApproval
+      ? `Purchase order resolved for ${numericQuantity} × ${product.name} from ${supplier.companyName}. Total is ₹${totalAmount.toLocaleString(
+          "en-IN"
+        )}. Manager approval is required because the total exceeds ₹50,000.`
+      : `Purchase order resolved for ${numericQuantity} × ${product.name} from ${supplier.companyName}. Total is ₹${totalAmount.toLocaleString(
+          "en-IN"
+        )}.`,
   };
+}
+
+/**
+ * Escape regex characters before using a value
+ * inside a MongoDB regular expression.
+ */
+function escapeRegex(
+  value: string
+): string {
+  return value.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
 }

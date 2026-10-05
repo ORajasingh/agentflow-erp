@@ -1,28 +1,24 @@
 import dotenv from "dotenv";
+import mongoose from "mongoose";
 
 dotenv.config({
   path: "apps/api/.env",
 });
 
 import { connectDatabase } from "../config/database.js";
-import {
-  resolvePurchaseOrder,
-} from "./procurement.resolver.js";
+import { resolvePurchaseOrder } from "./procurement.resolver.js";
 
 async function main() {
   try {
     await connectDatabase();
 
-    const result =
-      await resolvePurchaseOrder(
-        "Create a purchase order for 2 Dell Latitude 5450 from Dell Technologies"
-      );
+    const result = await resolvePurchaseOrder(
+      "Dell Latitude 5450",
+      2
+    );
 
-    console.dir(
-      result,
-      {
-        depth: null,
-      }
+    console.log(
+      JSON.stringify(result, null, 2)
     );
   } catch (error) {
     console.error(
@@ -30,7 +26,13 @@ async function main() {
       error
     );
   } finally {
-    process.exit(0);
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect();
+    }
+
+    console.log(
+      "🔌 MongoDB disconnected"
+    );
   }
 }
 
