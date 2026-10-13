@@ -5,6 +5,11 @@ import PurchaseOrder from "../models/PurchaseOrder.js";
 import StockMovement from "../models/StockMovement.js";
 import Supplier from "../models/Supplier.js";
 import FinanceTransaction from "../models/FinanceTransaction.js";
+import mongoose from "mongoose";
+import {
+  authenticateToken,
+  requireRole,
+} from "../middleware/auth.js";
 
 const router = Router();
 
@@ -12,7 +17,7 @@ const router = Router();
  * GET /api/purchase-orders
  * Get all purchase orders
  */
-router.get("/", async (_req, res) => {
+router.get("/", authenticateToken, async (_req, res) => {
   try {
     const orders = await PurchaseOrder.find()
       .sort({ createdAt: -1 })
@@ -23,24 +28,21 @@ router.get("/", async (_req, res) => {
       count: orders.length,
       data: orders,
     });
-  } catch (error) {
-    console.error(
-      "Failed to fetch purchase orders:",
-      error
-    );
+  }catch (error) {
+  console.error("Failed to create purchase order:", error);
 
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch purchase orders",
-    });
-  }
+  return res.status(500).json({
+    success: false,
+    message: "Failed to create purchase order.",
+  });
+}
 });
 
 /**
  * GET /api/purchase-orders/:id
  * Get one purchase order
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const order = await PurchaseOrder.findById(
       req.params.id
@@ -76,25 +78,64 @@ router.get("/:id", async (req, res) => {
  * POST /api/purchase-orders
  * Create purchase order
  */
-router.post("/", async (req, res) => {
-  try {
-    const {
-      supplierId,
-      items,
-      tax = 0,
-    } = req.body;
 
+/**
+ * POST /api/purchase-orders
+ * Create a purchase order using server-validated data.
+ */
+
+router.post(
+  "/",
+  authenticateToken,
+  requireRole("admin", "manager"),
+  async (req, res) => {
+
+  try {
+    const { supplierId, items, tax = 0 } = req.body;
+
+    // 1. Validate the request
     if (
-      !supplierId ||
+      typeof supplierId !== "string" ||
+      !supplierId.trim() ||
       !Array.isArray(items) ||
       items.length === 0
     ) {
       res.status(400).json({
         success: false,
         message:
-          "supplierId and at least one item are required",
+          "A valid supplierId and at least one item are required.",
       });
+      return;
+    }
 
+    if (items.length > 100) {
+      res.status(400).json({
+        success: false,
+        message: "A purchase order cannot contain more than 100 items.",
+      });
+      return;
+    }
+
+    const numericTax = Number(tax);
+
+    if (
+      !Number.isFinite(numericTax) ||
+      numericTax < 0 ||
+      numericTax > 1_000_000_000
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Tax must be a valid non-negative amount.",
+      });
+      return;
+    }
+
+    // 2. Validate the supplier ID before querying MongoDB
+    if (!mongoose.isValidObjectId(supplierId)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid supplier ID.",
+      });
       return;
     }
 
@@ -103,66 +144,137 @@ router.post("/", async (req, res) => {
     if (!supplier) {
       res.status(404).json({
         success: false,
-        message: "Supplier not found",
+        message: "Supplier not found.",
       });
-
       return;
     }
 
     if (supplier.status !== "Active") {
       res.status(400).json({
         success: false,
-        message: "Supplier is not active",
+        message: "Supplier is not active.",
       });
-
       return;
     }
 
+    // 3. Validate every item before creating the order
     const orderItems = [];
+    const seenProductIds = new Set<string>();
     let subtotal = 0;
 
     for (const item of items) {
-      const product = await Product.findById(
-        item.productId
-      );
+      if (
+        !item ||
+        typeof item.productId !== "string" ||
+        !mongoose.isValidObjectId(item.productId)
+      ) {
+        res.status(400).json({
+          success: false,
+          message: "Every item must have a valid product ID.",
+        });
+        return;
+      }
+
+      if (seenProductIds.has(item.productId)) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Duplicate products are not allowed. Combine their quantities into one item.",
+        });
+        return;
+      }
+
+      seenProductIds.add(item.productId);
+
+      const product = await Product.findById(item.productId);
 
       if (!product) {
         res.status(404).json({
           success: false,
-          message: `Product ${item.productId} not found`,
+          message: `Product ${item.productId} not found.`,
         });
+        return;
+      }
 
+      if (product.isActive === false) {
+        res.status(400).json({
+          success: false,
+          message: `Product ${product.name} is inactive.`,
+        });
+        return;
+      }
+
+      // Product.supplier stores a supplier name, not a MongoDB ID.
+      const productSupplier = product.supplier?.trim().toLowerCase();
+      const selectedSupplier = supplier.companyName.trim().toLowerCase();
+
+      if (
+        !productSupplier ||
+        productSupplier !== selectedSupplier
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            `Supplier mismatch for ${product.name}. ` +
+            `Product supplier: ${product.supplier || "not assigned"}; ` +
+            `selected supplier: ${supplier.companyName}. ` +
+            "Correct the product's supplier assignment before ordering.",
+        });
         return;
       }
 
       const quantity = Number(item.quantity);
-      const unitPrice = Number(
-        item.unitPrice ?? product.price
-      );
 
-      if (!Number.isInteger(quantity) || quantity <= 0) {
+      if (
+        !Number.isSafeInteger(quantity) ||
+        quantity <= 0 ||
+        quantity > 1_000_000
+      ) {
         res.status(400).json({
           success: false,
           message:
-            `Invalid quantity for ${product.name}`,
+            `Quantity for ${product.name} must be a positive whole number.`,
         });
-
         return;
       }
 
-      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      // Never trust a purchase price submitted by the frontend.
+      const unitPrice = Number(product.costPrice);
+
+      if (
+        !Number.isFinite(unitPrice) ||
+        unitPrice <= 0
+      ) {
         res.status(400).json({
           success: false,
           message:
-            `Invalid unit price for ${product.name}`,
+            `A valid positive procurement cost is required for ${product.name}.`,
         });
-
         return;
       }
 
       const total = quantity * unitPrice;
 
+      if (
+        !Number.isFinite(total) ||
+        total > 1_000_000_000
+      ) {
+        res.status(400).json({
+          success: false,
+          message: `Invalid line total for ${product.name}.`,
+        });
+        return;
+      }
+
       subtotal += total;
+
+      if (!Number.isFinite(subtotal) || subtotal > 1_000_000_000) {
+        res.status(400).json({
+          success: false,
+          message: "Purchase subtotal exceeds the allowed limit.",
+        });
+        return;
+      }
 
       orderItems.push({
         product: product._id,
@@ -174,10 +286,24 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const numericTax = Number(tax) || 0;
+    // 4. Calculate the final amount on the backend
     const totalAmount = subtotal + numericTax;
 
-    const orderNumber = `PO-${Date.now()}`;
+    if (
+      !Number.isFinite(totalAmount) ||
+      totalAmount > 1_000_000_000
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Purchase order total is invalid or too large.",
+      });
+      return;
+    }
+
+    // 5. Generate an order number and save as Pending.
+    // The approval route must enforce authorization separately.
+    const orderNumber =
+      `PO-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
     const order = await PurchaseOrder.create({
       orderNumber,
@@ -191,20 +317,22 @@ router.post("/", async (req, res) => {
       paymentStatus: "Pending",
     });
 
+    const requiresApproval = totalAmount > 50_000;
+
     res.status(201).json({
       success: true,
-      message: "Purchase order created successfully",
+      message: requiresApproval
+        ? `Purchase order ${order.orderNumber} was created as Pending. Manager approval is required because the total exceeds ₹50,000.`
+        : `Purchase order ${order.orderNumber} was created successfully and is Pending approval.`,
+      requiresApproval,
       data: order,
     });
   } catch (error) {
-    console.error(
-      "Failed to create purchase order:",
-      error
-    );
+    console.error("Failed to create purchase order:", error);
 
-    res.status(400).json({
+    res.status(500).json({
       success: false,
-      message: "Failed to create purchase order",
+      message: "Failed to create purchase order.",
     });
   }
 });
@@ -213,7 +341,11 @@ router.post("/", async (req, res) => {
  * PATCH /api/purchase-orders/:id/approve
  * Approve purchase order
  */
-router.patch("/:id/approve", async (req, res) => {
+router.patch(
+  "/:id/approve",
+  authenticateToken,
+  requireRole("admin", "manager"),
+  async (req, res) => {
   try {
     const order = await PurchaseOrder.findById(
       req.params.id
@@ -320,7 +452,11 @@ router.patch("/:id/order", async (req, res) => {
  * - Inventory increases
  * - Supplier statistics update
  */
-router.patch("/:id/receive", async (req, res) => {
+router.patch(
+  "/:id/receive",
+  authenticateToken,
+  requireRole("admin", "manager"),
+  async (req, res) => {
   try {
     const order = await PurchaseOrder.findById(
       req.params.id

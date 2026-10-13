@@ -1,8 +1,49 @@
 "use client";
 
-import { Bell, Search, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Bell, Search, Sparkles, LogOut } from "lucide-react";
 
 export default function Topbar() {
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+
+  async function handleLogout() {
+  if (loggingOut) return;
+
+  setLoggingOut(true);
+  setLogoutError("");
+
+  try {
+    const response = await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const details = await response.text();
+      throw new Error(
+        `Logout failed (${response.status}). ${details}`
+      );
+    }
+
+    // Full browser navigation after the cookie is cleared.
+    window.location.assign("/login");
+  } catch (error) {
+    console.error("Logout error:", error);
+
+    setLogoutError(
+      error instanceof Error
+        ? error.message
+        : "Unable to log out. Please try again."
+    );
+
+    setLoggingOut(false);
+  }
+}
+
   return (
     <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-950">
       {/* Search */}
@@ -37,7 +78,6 @@ export default function Topbar() {
           className="relative rounded-xl p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
         >
           <Bell size={19} />
-
           <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-600" />
         </button>
 
@@ -51,13 +91,37 @@ export default function Topbar() {
             <p className="text-sm font-medium text-slate-900 dark:text-white">
               Admin
             </p>
-
             <p className="text-[11px] text-slate-500">
               Administrator
             </p>
           </div>
         </div>
+
+        {/* Logout */}
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          aria-label="Logout"
+          title="Logout"
+          className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:border-red-900 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+        >
+          <LogOut size={17} />
+          <span className="hidden sm:inline">
+            {loggingOut ? "Logging out..." : "Logout"}
+          </span>
+        </button>
       </div>
+
+      {/* Logout error */}
+     {logoutError && (
+  <p
+    role="alert"
+    className="absolute right-6 top-20 z-50 rounded-lg bg-red-100 px-4 py-2 text-sm text-red-700"
+  >
+    {logoutError}
+  </p>
+)}
     </header>
   );
 }

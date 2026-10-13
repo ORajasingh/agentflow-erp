@@ -1,9 +1,9 @@
 import { getInventoryInsights } from "../agents/inventory.agent.js";
 import { getSalesInsights } from "../agents/sales.agent.js";
 import { getFinanceInsights } from "../agents/finance.agent.js";
-import {
-  getProcurementInsights,
-} from "../agents/procurement.agent.js";
+import { getProcurementInsights } from "../agents/procurement.agent.js";
+import { resolvePurchaseOrder } from "../actions/procurement.resolver.js";
+import PendingProcurement from "../models/PendingProcurement.js";
 
 // ============================================================
 // TYPES
@@ -25,113 +25,52 @@ export interface DetectedAction {
   confidence: "high" | "medium" | "low";
 }
 
+export interface ProcurementActionResult {
+  status: "needs_details" | "resolved" | "blocked";
+  message: string;
+  details?: Awaited<ReturnType<typeof resolvePurchaseOrder>>;
+  pendingProcurementId?: string;
+}
+
 export interface OrchestratorResult {
   agent: AgentName;
   data: unknown;
   action: DetectedAction;
+  actionResult?: ProcurementActionResult;
 }
 
 // ============================================================
 // AGENT DETECTION
 // ============================================================
 
-export function detectAgent(
-  message: string
-): AgentName {
-  const text = message
-    .toLowerCase()
-    .trim();
-
-  // ----------------------------------------
-  // INVENTORY
-  // ----------------------------------------
+export function detectAgent(message: string): AgentName {
+  const text = message.toLowerCase().trim();
 
   if (
-    text.includes("inventory") ||
-    text.includes("stock") ||
-    text.includes("stocks") ||
-    text.includes("low stock") ||
-    text.includes("low-stock") ||
-    text.includes("running low") ||
-    text.includes("runs low") ||
-    text.includes("out of stock") ||
-    text.includes("reorder") ||
-    text.includes("reorder level") ||
-    text.includes("warehouse") ||
-    text.includes("available quantity") ||
-    text.includes("stock quantity") ||
-    text.includes("product quantity") ||
-    text.includes("how many products") ||
+    /\b(inventory|stock|stocks|low stock|low-stock|running low|runs low|out of stock|reorder|warehouse|available quantity|stock quantity|product quantity)\b/.test(text) ||
     text.includes("which products are low") ||
     text.includes("which products need")
   ) {
     return "inventory";
   }
 
-  // ----------------------------------------
-  // SALES
-  // ----------------------------------------
-
   if (
-    text.includes("sales") ||
-    text.includes("sale") ||
-    text.includes("sold") ||
-    text.includes("selling") ||
-    text.includes("revenue") ||
+    /\b(sales|sale|sold|selling|revenue|best selling|best-selling|top selling|top-selling)\b/.test(text) ||
     text.includes("sales order") ||
-    text.includes("sales orders") ||
-    text.includes("best selling") ||
-    text.includes("best-selling") ||
-    text.includes("top selling") ||
-    text.includes("top-selling") ||
     text.includes("customer sales")
   ) {
     return "sales";
   }
 
-  // ----------------------------------------
-  // FINANCE
-  // ----------------------------------------
-
   if (
-    text.includes("finance") ||
-    text.includes("financial") ||
-    text.includes("income") ||
-    text.includes("expense") ||
-    text.includes("expenses") ||
-    text.includes("profit") ||
-    text.includes("cash flow") ||
-    text.includes("cashflow") ||
-    text.includes("payment") ||
-    text.includes("payments") ||
-    text.includes("budget") ||
-    text.includes("money") ||
-    text.includes("spending") ||
-    text.includes("spent") ||
-    text.includes("cost")
+    /\b(finance|financial|income|expense|expenses|profit|payment|payments|budget|money|spending|spent|cost|cash flow|cashflow)\b/.test(text)
   ) {
     return "finance";
   }
 
-  // ----------------------------------------
-  // PROCUREMENT
-  // ----------------------------------------
-
   if (
-    text.includes("procurement") ||
-    text.includes("purchase") ||
-    text.includes("purchases") ||
+    /\b(procurement|purchase|purchases|supplier|suppliers|vendor|vendors|buy|buying|ordered|ordering)\b/.test(text) ||
     text.includes("purchase order") ||
-    text.includes("purchase orders") ||
-    text.includes("supplier") ||
-    text.includes("suppliers") ||
-    text.includes("supplier") ||
-    text.includes("vendor") ||
-    text.includes("vendors") ||
-    text.includes("buy") ||
-    text.includes("buying") ||
-    text.includes("ordered") ||
-    text.includes("ordering") ||
     text.includes("received goods")
   ) {
     return "procurement";
@@ -144,75 +83,89 @@ export function detectAgent(
 // ACTION DETECTION
 // ============================================================
 
-export function detectAction(
-  message: string
-): DetectedAction {
-  const text = message
-    .toLowerCase()
-    .trim();
+export function detectAction(message: string): DetectedAction {
+  const text = message.toLowerCase().trim();
 
-  // ----------------------------------------
-  // CREATE PURCHASE ORDER
-  // ----------------------------------------
-
-  const purchaseOrderAction =
-    text.includes("create purchase order") ||
-    text.includes("create a purchase order") ||
-    text.includes("create po") ||
-    text.includes("create a po") ||
-    text.includes("make purchase order") ||
-    text.includes("make a purchase order") ||
-    text.includes("make po") ||
-    text.includes("make a po") ||
-    text.includes("raise purchase order") ||
-    text.includes("raise a purchase order") ||
-    text.includes("raise po") ||
-    text.includes("raise a po") ||
-    text.includes("generate purchase order") ||
-    text.includes("generate a purchase order") ||
-    text.includes("generate po") ||
-    text.includes("generate a po") ||
-    text.includes("place purchase order") ||
-    text.includes("place a purchase order") ||
-    text.includes("place po") ||
-    text.includes("place a po");
-
-  if (purchaseOrderAction) {
-    return {
-      name: "create_purchase_order",
-      confidence: "high",
-    };
+  if (
+    /^(how|what|why|when|where|explain|tell me about)\b/.test(text) &&
+    !/\b(buy|order|purchase|procure)\s+\d+\b/.test(text)
+  ) {
+    return { name: "none", confidence: "high" };
   }
 
-  // ----------------------------------------
-  // BUY / ORDER PRODUCT
-  // ----------------------------------------
+  const explicitAction =
+    /\b(create|make|raise|generate|place)\s+(?:a\s+)?(?:purchase order|po)\b/.test(text);
 
   const buyingAction =
-    text.startsWith("buy ") ||
-    text.startsWith("buying ") ||
-    text.startsWith("order ") ||
-    text.startsWith("purchase ");
+    /\b(?:buy|order|purchase|procure)\s+\d+\b/.test(text) ||
+    /^(?:buy|order|purchase|procure)\b/.test(text);
 
-  if (buyingAction) {
+  if (explicitAction || buyingAction) {
     return {
       name: "create_purchase_order",
-      confidence: "medium",
+      confidence: explicitAction ? "high" : "medium",
     };
   }
 
-  // ----------------------------------------
-  // NO ACTION
-  // ----------------------------------------
-
-  return {
-    name: "none",
-    confidence: "high",
-  };
+  return { name: "none", confidence: "high" };
 }
 
 // ============================================================
-// RUN READ-ONLY AGENT
+// PURCHASE REQUEST PARSER
+// ============================================================
+
+interface ParsedPurchaseRequest {
+  productName?: string;
+  quantity?: number;
+}
+
+function cleanProductName(value: string): string {
+  return value
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
+    .replace(/[.!?]+$/g, "")
+    .replace(
+      /\s+(?:laptops?|notebooks?|computers?|pcs?|pieces?|units?|products?|items?)$/i,
+      ""
+    )
+    .trim();
+}
+
+export function parsePurchaseRequest(
+  message: string
+): ParsedPurchaseRequest {
+  const text = message.trim();
+
+  const quantityFirst =
+    text.match(
+      /\b(?:buy|order|purchase|procure)\s+(?:me\s+)?(\d+)\s+(?:of\s+)?(.+?)(?:[.!?]+)?$/i
+    ) ??
+    text.match(
+      /\b(?:create|make|raise|generate|place)\s+(?:a\s+)?(?:purchase order|po)\s+for\s+(\d+)\s+(?:of\s+)?(.+?)(?:[.!?]+)?$/i
+    );
+
+  if (quantityFirst) {
+    return {
+      quantity: Number(quantityFirst[1]),
+      productName: cleanProductName(quantityFirst[2]),
+    };
+  }
+
+  const quantityLast = text.match(
+    /\b(?:buy|order|purchase|procure)\s+(.+?)\s+(?:quantity|qty)\s*[:=]?\s*(\d+)\s*$/i
+  );
+
+  if (quantityLast) {
+    return {
+      productName: cleanProductName(quantityLast[1]),
+      quantity: Number(quantityLast[2]),
+    };
+  }
+
+  return {};
+}
+
+// ============================================================
+// READ-ONLY AGENTS
 // ============================================================
 
 export async function runAgent(
@@ -220,16 +173,16 @@ export async function runAgent(
 ): Promise<unknown> {
   switch (agent) {
     case "inventory":
-      return await getInventoryInsights();
+      return getInventoryInsights();
 
     case "sales":
-      return await getSalesInsights();
+      return getSalesInsights();
 
     case "finance":
-      return await getFinanceInsights();
+      return getFinanceInsights();
 
     case "procurement":
-      return await getProcurementInsights();
+      return getProcurementInsights();
 
     case "general":
     default:
@@ -238,60 +191,164 @@ export async function runAgent(
 }
 
 // ============================================================
+// PENDING PROCUREMENT PERSISTENCE
+// ============================================================
+
+type ResolvedPurchase = Awaited<
+  ReturnType<typeof resolvePurchaseOrder>
+>;
+
+async function savePendingProcurement(
+  sessionId: string,
+  resolution: ResolvedPurchase
+): Promise<string> {
+  if (
+    !resolution.resolved ||
+    !resolution.product ||
+    !resolution.supplier
+  ) {
+    throw new Error(
+      "Cannot save a procurement request without a resolved product and active supplier."
+    );
+  }
+
+  const productId = resolution.product.id;
+  const supplierId = resolution.supplier.id;
+  const quantity = resolution.product.quantity;
+  const unitCost = resolution.product.price;
+  const totalAmount = resolution.totalAmount;
+
+  if (
+    !productId ||
+    !supplierId ||
+    !Number.isSafeInteger(quantity) ||
+    quantity <= 0 ||
+    !Number.isFinite(unitCost) ||
+    unitCost <= 0 ||
+    !Number.isFinite(totalAmount) ||
+    totalAmount === undefined || totalAmount <= 0
+  ) {
+    throw new Error(
+      "The resolved procurement details are incomplete or invalid."
+    );
+  }
+
+  const pending = await PendingProcurement.create({
+    sessionId,
+    productId,
+    productName: resolution.product.name,
+    sku: resolution.product.sku,
+    quantity,
+    unitCost,
+    supplierId,
+    supplierName: resolution.supplier.name,
+    status: "awaiting_confirmation",
+    totalAmount,
+    requiresApproval: resolution.requiresApproval,
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+  });
+
+  return pending.id;
+}
+
+// ============================================================
 // ORCHESTRATOR
 // ============================================================
 
 export async function orchestrate(
-  message: string
+  message: string,
+  sessionId?: string
 ): Promise<OrchestratorResult> {
-  const cleanMessage =
-    message.trim();
+  const cleanMessage = message.trim();
 
   if (!cleanMessage) {
-    throw new Error(
-      "Message cannot be empty"
-    );
+    throw new Error("Message cannot be empty");
   }
 
-  // ----------------------------------------
-  // Detect agent
-  // ----------------------------------------
-
-  const agent =
-    detectAgent(cleanMessage);
-
-  // ----------------------------------------
-  // Detect requested action
-  // ----------------------------------------
-
-  const action =
-    detectAction(cleanMessage);
+  const agent = detectAgent(cleanMessage);
+  const action = detectAction(cleanMessage);
 
   console.log(
-    `🧠 Orchestrator: "${cleanMessage}" → agent=${agent}, action=${action.name}`
+    `Orchestrator: agent=${agent}, action=${action.name}`
   );
 
-  // ----------------------------------------
-  // Run the selected READ-ONLY agent
-  //
-  // IMPORTANT:
-  // Action detection does NOT execute the
-  // write operation.
-  //
-  // create_purchase_order is handled later
-  // by the confirmation/action layer.
-  // ----------------------------------------
+  const data = await runAgent(agent);
 
-  const data =
-    await runAgent(agent);
+  let actionResult: ProcurementActionResult | undefined;
 
-  // ----------------------------------------
-  // Return orchestration result
-  // ----------------------------------------
+  if (action.name === "create_purchase_order") {
+    const parsed = parsePurchaseRequest(cleanMessage);
+
+    if (!parsed.productName || !parsed.quantity) {
+      actionResult = {
+        status: "needs_details",
+        message:
+          "Please specify the product name and a positive whole-number quantity. " +
+          'For example: "Buy 2 Dell Latitude 5450 laptops".',
+      };
+    } else if (
+      !Number.isSafeInteger(parsed.quantity) ||
+      parsed.quantity <= 0
+    ) {
+      actionResult = {
+        status: "needs_details",
+        message: "Quantity must be a positive whole number.",
+      };
+    } else {
+      try {
+        const resolution = await resolvePurchaseOrder(
+          parsed.productName,
+          parsed.quantity
+        );
+
+        if (!resolution.resolved) {
+          actionResult = {
+            status: "blocked",
+            message: resolution.message,
+            details: resolution,
+          };
+        } else if (sessionId?.trim()) {
+          const pendingProcurementId =
+            await savePendingProcurement(
+              sessionId.trim(),
+              resolution
+            );
+
+          actionResult = {
+            status: "resolved",
+            message:
+              `${resolution.message} ` +
+              "The request has been saved for confirmation. " +
+              "No purchase order has been created yet.",
+            details: resolution,
+            pendingProcurementId,
+          };
+        } else {
+          actionResult = {
+            status: "resolved",
+            message:
+              `${resolution.message} ` +
+              "A conversation ID is required to save this request for confirmation. " +
+              "No purchase order has been created.",
+            details: resolution,
+          };
+        }
+      } catch (error) {
+        console.error("Purchase resolution failed:", error);
+
+        actionResult = {
+          status: "blocked",
+          message:
+            "I couldn't prepare this purchase request because an internal error occurred. No purchase order was created.",
+        };
+      }
+    }
+  }
 
   return {
     agent,
     data,
     action,
+    ...(actionResult ? { actionResult } : {}),
   };
 }

@@ -13,6 +13,7 @@ import financeRoutes from "./routes/finance.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
 import aiChatRoutes from "./routes/ai-chat.routes.js";
 import knowledgeRoutes from "./routes/knowledge.routes.js";
+import authRoutes from "./routes/auth.routes.js";
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use(
 app.use(express.json());
 app.use("/api/products", productRoutes);
 app.use("/api/customers", customerRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/ai/chat", aiChatRoutes);

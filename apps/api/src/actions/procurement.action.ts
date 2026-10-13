@@ -1,3 +1,4 @@
+
 import Product from "../models/Product.js";
 import Supplier from "../models/Supplier.js";
 import PurchaseOrder from "../models/PurchaseOrder.js";
@@ -17,93 +18,100 @@ export interface CreatePurchaseOrderInput {
 export async function createPurchaseOrder(
   input: CreatePurchaseOrderInput
 ) {
-  const {
-    supplierId,
-    items,
-    tax = 0,
-  } = input;
+  const { supplierId, items, tax = 0 } = input;
 
-  // ----------------------------------------
-  // Validate input
-  // ----------------------------------------
-
+  // 1. Validate input
   if (
-    !supplierId ||
+    !supplierId?.trim() ||
     !Array.isArray(items) ||
     items.length === 0
   ) {
     throw new Error(
-      "supplierId and at least one item are required"
+      "Supplier ID and at least one purchase item are required."
     );
   }
 
-  // ----------------------------------------
-  // Find supplier
-  // ----------------------------------------
+  // 2. Validate tax
+  const numericTax = Number(tax);
 
-  const supplier =
-    await Supplier.findById(supplierId);
+  if (
+    !Number.isFinite(numericTax) ||
+    numericTax < 0
+  ) {
+    throw new Error(
+      "Tax must be a valid non-negative number."
+    );
+  }
+
+  // 3. Find and validate supplier
+  const supplier = await Supplier.findById(supplierId);
 
   if (!supplier) {
-    throw new Error(
-      "Supplier not found"
-    );
+    throw new Error("Supplier not found.");
   }
 
   if (supplier.status !== "Active") {
-    throw new Error(
-      "Supplier is not active"
-    );
+    throw new Error("Supplier is not active.");
   }
 
-  // ----------------------------------------
-  // Build PO items
-  // ----------------------------------------
-
+  // 4. Validate all items before creating the PO
   const orderItems = [];
   let subtotal = 0;
 
   for (const item of items) {
-    const product =
-      await Product.findById(
-        item.productId
-      );
+    if (!item.productId) {
+      throw new Error("Every item must have a product ID.");
+    }
+
+    const product = await Product.findById(item.productId);
 
     if (!product) {
       throw new Error(
-        `Product ${item.productId} not found`
+        `Product ${item.productId} not found.`
       );
     }
 
-    const quantity =
-      Number(item.quantity);
-
-    const unitPrice =
-      Number(
-        item.unitPrice ??
-          product.price
+    if (product.isActive === false) {
+      throw new Error(
+        `Product ${product.name} is inactive.`
       );
+    }
+
+    const quantity = Number(item.quantity);
 
     if (
-      !Number.isInteger(quantity) ||
+      !Number.isSafeInteger(quantity) ||
       quantity <= 0
     ) {
       throw new Error(
-        `Invalid quantity for ${product.name}`
+        `Quantity for ${product.name} must be a positive whole number.`
       );
     }
+
+    // Prefer procurement cost over the selling price.
+    const defaultUnitCost =
+      product.costPrice ?? product.price;
+
+    // Always use the trusted procurement cost from the database.
+// Do not let the frontend override the purchase price.
+const unitPrice = Number(defaultUnitCost);
 
     if (
       !Number.isFinite(unitPrice) ||
-      unitPrice < 0
+      unitPrice <= 0
     ) {
       throw new Error(
-        `Invalid unit price for ${product.name}`
+        `Invalid procurement cost for ${product.name}.`
       );
     }
 
-    const total =
-      quantity * unitPrice;
+    const total = quantity * unitPrice;
+
+    if (!Number.isFinite(total)) {
+      throw new Error(
+        `The line total for ${product.name} is invalid.`
+      );
+    }
 
     subtotal += total;
 
@@ -117,96 +125,55 @@ export async function createPurchaseOrder(
     });
   }
 
-  // ----------------------------------------
-  // Calculate total
-  // ----------------------------------------
+  if (!Number.isFinite(subtotal)) {
+    throw new Error("The purchase subtotal is invalid.");
+  }
 
-  const numericTax =
-    Number(tax) || 0;
+  // 5. Calculate final amount and approval requirement
+  const totalAmount = subtotal + numericTax;
 
-  const totalAmount =
-    subtotal + numericTax;
+  if (!Number.isFinite(totalAmount)) {
+    throw new Error("The purchase total is invalid.");
+  }
 
-  // ----------------------------------------
-  // Generate PO number
-  // ----------------------------------------
+  const requiresApproval = totalAmount > 50000;
 
-  const orderNumber =
-    `PO-${Date.now()}`;
+  // 6. Generate PO number
+  const orderNumber = `PO-${Date.now()}`;
 
-  // ----------------------------------------
-  // Create purchase order
-  // ----------------------------------------
+  // 7. Create the purchase order only after validation
+  const order = await PurchaseOrder.create({
+    orderNumber,
+    supplier: supplier._id,
+    supplierName: supplier.companyName,
+    items: orderItems,
+    subtotal,
+    tax: numericTax,
+    totalAmount,
+    status: "Pending",
+    paymentStatus: "Pending",
+  });
 
-  const order =
-    await PurchaseOrder.create({
-      orderNumber,
-
-      supplier:
-        supplier._id,
-
-      supplierName:
-        supplier.companyName,
-
-      items:
-        orderItems,
-
-      subtotal,
-
-      tax:
-        numericTax,
-
-      totalAmount,
-
-      status:
-        "Pending",
-
-      paymentStatus:
-        "Pending",
-    });
-
-  // ----------------------------------------
-  // Approval requirement
-  // ----------------------------------------
-
-  const requiresApproval =
-    totalAmount > 50000;
-
+  // 8. Return result
   return {
     success: true,
 
     order: {
       id: order._id,
-      orderNumber:
-        order.orderNumber,
-
-      supplier:
-        order.supplierName,
-
-      items:
-        order.items,
-
-      subtotal:
-        order.subtotal,
-
-      tax:
-        order.tax,
-
-      totalAmount:
-        order.totalAmount,
-
-      status:
-        order.status,
-
-      paymentStatus:
-        order.paymentStatus,
+      orderNumber: order.orderNumber,
+      supplier: order.supplierName,
+      items: order.items,
+      subtotal: order.subtotal,
+      tax: order.tax,
+      totalAmount: order.totalAmount,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
     },
 
     requiresApproval,
 
-    message:
-      requiresApproval
-        ? "Purchase order created and requires manager approval because the total exceeds ₹50,000."
-        : "Purchase order created successfully.",
+    message: requiresApproval
+      ? `Purchase order ${order.orderNumber} was created with status Pending. Manager approval is required because the total of ₹${totalAmount.toLocaleString("en-IN")} exceeds ₹50,000.`
+      : `Purchase order ${order.orderNumber} was created successfully.`,
   };
 }
