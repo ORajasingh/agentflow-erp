@@ -94,9 +94,7 @@ export default function ProcurementPage() {
 
   async function loadData() {
     try {
-      setLoading(true);
-      setError("");
-
+      
       const [
         ordersResponse,
         suppliersResponse,
@@ -106,6 +104,9 @@ export default function ProcurementPage() {
         fetch(`${API_URL}/api/suppliers`),
         fetch(`${API_URL}/api/products`),
       ]);
+
+      setLoading(true);
+      setError("");
 
       if (!ordersResponse.ok) {
         throw new Error(
@@ -136,9 +137,63 @@ export default function ProcurementPage() {
     }
   }
 
-  useEffect(() => {
-    loadData();
-  }, []);
+useEffect(() => {
+  let cancelled = false;
+
+  async function initializeData() {
+    try {
+      const [
+        ordersResponse,
+        suppliersResponse,
+        productsResponse,
+      ] = await Promise.all([
+        fetch(`${API_URL}/api/purchase-orders`),
+        fetch(`${API_URL}/api/suppliers`),
+        fetch(`${API_URL}/api/products`),
+      ]);
+
+      if (!ordersResponse.ok) {
+        throw new Error("Failed to fetch purchase orders");
+      }
+
+      if (!suppliersResponse.ok || !productsResponse.ok) {
+        throw new Error("Failed to fetch suppliers or products");
+      }
+
+      const [ordersResult, suppliersResult, productsResult] =
+        await Promise.all([
+          ordersResponse.json(),
+          suppliersResponse.json(),
+          productsResponse.json(),
+        ]);
+
+      if (!cancelled) {
+        setOrders(ordersResult.data || []);
+        setSuppliers(suppliersResult.data || []);
+        setProducts(productsResult.data || []);
+        setError("");
+      }
+    } catch (error) {
+      console.error("Failed to load procurement data:", error);
+
+      if (!cancelled) {
+        setError(
+          "Unable to load procurement data. Make sure the API server is running."
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    }
+  }
+
+  void initializeData();
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
 
   const filteredOrders = useMemo(() => {
     const value = search

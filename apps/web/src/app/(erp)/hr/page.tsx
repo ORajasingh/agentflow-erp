@@ -189,7 +189,7 @@ export default function HRPage() {
 
             <div>
               <h2 className="font-semibold text-white">
-                Today's Attendance
+                Today&apos;s Attendance
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">

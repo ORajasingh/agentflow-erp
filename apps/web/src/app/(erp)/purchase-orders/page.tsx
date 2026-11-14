@@ -12,8 +12,6 @@ import {
   X,
 } from "lucide-react";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface Supplier {
   _id: string;
@@ -75,8 +73,10 @@ export default function PurchaseOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [showModal, setShowModal] = useState(false);
-  const [saving, setSaving] = useState(false);
+ const [showModal, setShowModal] = useState(false);
+const [saving, setSaving] = useState(false);
+
+
 
   const [supplierId, setSupplierId] = useState("");
   const [tax, setTax] = useState(0);
@@ -109,15 +109,21 @@ export default function PurchaseOrdersPage() {
       setError("");
 
       const response = await fetch(
-        `${API_URL}/api/purchase-orders`,
+        "/api/purchase-orders",
         {
           cache: "no-store",
         }
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch purchase orders");
-      }
+   if (!response.ok) {
+  const errorText = await response.text();
+
+  alert(
+    `Purchase Orders API Error\nStatus: ${response.status}\nResponse: ${errorText}`
+  );
+
+  return;
+}
 
       const result = await response.json();
 
@@ -137,7 +143,7 @@ export default function PurchaseOrdersPage() {
   async function fetchSuppliers() {
     try {
       const response = await fetch(
-        `${API_URL}/api/suppliers`,
+        "/api/suppliers",
         {
           cache: "no-store",
         }
@@ -160,7 +166,7 @@ export default function PurchaseOrdersPage() {
   async function fetchProducts() {
     try {
       const response = await fetch(
-        `${API_URL}/api/products`,
+        "/api/products",
         {
           cache: "no-store",
         }
@@ -181,7 +187,6 @@ export default function PurchaseOrdersPage() {
   }
 
   async function refreshData() {
-    setLoading(true);
 
     await Promise.all([
       fetchOrders(),
@@ -192,9 +197,76 @@ export default function PurchaseOrdersPage() {
     setLoading(false);
   }
 
+ 
   useEffect(() => {
-    refreshData();
+    let cancelled = false;
+
+    async function initializePurchaseOrders() {
+      try {
+        const [ordersResponse, suppliersResponse, productsResponse] =
+          await Promise.all([
+            fetch("/api/purchase-orders", { cache: "no-store" }),
+            fetch("/api/suppliers", { cache: "no-store" }),
+            fetch("/api/products", { cache: "no-store" }),
+          ]);
+
+        if (!ordersResponse.ok) {
+          throw new Error("Failed to fetch purchase orders");
+        }
+
+        const ordersResult = await ordersResponse.json();
+
+        if (!ordersResult.success) {
+          throw new Error(
+            ordersResult.message || "Failed to fetch purchase orders"
+          );
+        }
+
+        const suppliersResult = suppliersResponse.ok
+          ? await suppliersResponse.json()
+          : null;
+
+        const productsResult = productsResponse.ok
+          ? await productsResponse.json()
+          : null;
+
+        if (!cancelled) {
+          setOrders(ordersResult.data ?? []);
+          setSuppliers(
+            suppliersResult?.success
+              ? suppliersResult.data ?? []
+              : []
+          );
+          setProducts(
+            productsResult?.success
+              ? productsResult.data ?? []
+              : []
+          );
+        }
+      } catch (error) {
+        console.error("Purchase order loading error:", error);
+
+        if (!cancelled) {
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load purchase orders."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initializePurchaseOrders();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
 
   function openCreateModal() {
     setSupplierId("");
@@ -308,7 +380,7 @@ export default function PurchaseOrdersPage() {
       setError("");
 
       const response = await fetch(
-        `${API_URL}/api/purchase-orders`,
+        "/api/purchase-orders",
         {
           method: "POST",
           headers: {
@@ -350,15 +422,15 @@ export default function PurchaseOrdersPage() {
     }
   }
 
-  async function updateOrder(
-    id: string,
-    action: "approve" | "order" | "receive"
-  ) {
+ async function updateOrder(
+  id: string,
+  action: "approve" | "reject" | "order" | "receive"
+) {
     try {
       setError("");
 
       const response = await fetch(
-        `${API_URL}/api/purchase-orders/${id}/${action}`,
+        `/api/purchase-orders/${encodeURIComponent(id)}/${action}`,
         {
           method: "PATCH",
         }
@@ -366,11 +438,15 @@ export default function PurchaseOrdersPage() {
 
       const result = await response.json();
 
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.message || "Failed to update purchase order"
-        );
-      }
+     if (!response.ok || !result.success) {
+  console.error("[PO Action] HTTP status:", response.status);
+  console.error("[PO Action] Response:", result);
+  console.error("[PO Action] Action:", action);
+
+  throw new Error(
+    result.message || "Failed to update purchase order"
+  );
+}
 
       await fetchOrders();
     } catch (err) {
@@ -413,20 +489,42 @@ export default function PurchaseOrdersPage() {
   }
 
   function getAction(order: PurchaseOrder) {
-    if (order.status === "Pending") {
-      return (
-        <button
-          type="button"
-          onClick={() =>
-            updateOrder(order._id, "approve")
+   if (order.status === "Pending") {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+
+          if (
+            window.confirm(
+              `Reject purchase order ${order.orderNumber}? This will mark it as Cancelled.`
+            )
+          ) {
+            updateOrder(order._id, "reject");
           }
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700"
-        >
-          <Check size={14} />
-          Approve
-        </button>
-      );
-    }
+        }}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700"
+      >
+        <X size={14} />
+        Reject
+      </button>
+
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          updateOrder(order._id, "approve");
+        }}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700"
+      >
+        <Check size={14} />
+        Approve
+      </button>
+    </div>
+  );
+}
 
     if (order.status === "Approved") {
       return (
@@ -649,9 +747,9 @@ export default function PurchaseOrdersPage() {
                 <tbody>
                   {orders.map((order) => (
                     <tr
-                      key={order._id}
-                      className="border-b border-slate-800 last:border-0 hover:bg-slate-900/50"
-                    >
+  key={order._id}
+  className="cursor-pointer border-b border-slate-800 last:border-0 hover:bg-slate-900/50"
+>
                       <td className="px-6 py-4">
                         <p className="font-medium text-white">
                           {order.orderNumber}

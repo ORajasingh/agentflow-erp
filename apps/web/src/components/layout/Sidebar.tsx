@@ -10,7 +10,6 @@ import {
   ClipboardCheck,
   FileText,
   LayoutDashboard,
-  PackageSearch,
   Settings,
   ShoppingCart,
   Users,

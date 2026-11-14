@@ -78,12 +78,14 @@ export default function ProductsPage() {
 
   async function loadProducts() {
     try {
-      setLoading(true);
-      setError("");
+      
 
       const response = await fetch(
         `${API_URL}/api/products`
       );
+
+      setLoading(true);
+      setError("");
 
       if (!response.ok) {
         throw new Error(
@@ -105,41 +107,69 @@ export default function ProductsPage() {
     }
   }
 
-  async function loadSuppliers() {
-    try {
-      const response = await fetch(
-        `${API_URL}/api/suppliers`
-      );
 
-      if (!response.ok) {
-        return;
-      }
-
-      const result = await response.json();
-
-      setSuppliers(
-        (result.data || []).map(
-          (supplier: {
-            supplierId: string;
-            companyName: string;
-          }) => ({
-            supplierId: supplier.supplierId,
-            companyName: supplier.companyName,
-          })
-        )
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load suppliers:",
-        error
-      );
-    }
-  }
-
+  
   useEffect(() => {
-    loadProducts();
-    loadSuppliers();
+    let cancelled = false;
+
+    async function initializeProducts() {
+      try {
+        const [productsResponse, suppliersResponse] = await Promise.all([
+          fetch(`${API_URL}/api/products`, { cache: "no-store" }),
+          fetch(`${API_URL}/api/suppliers`, { cache: "no-store" }),
+        ]);
+
+        if (!productsResponse.ok) {
+          throw new Error("Failed to fetch products");
+        }
+
+        const productsResult = await productsResponse.json();
+
+        if (!cancelled) {
+          setProducts(productsResult.data ?? []);
+        }
+
+        if (suppliersResponse.ok) {
+          const suppliersResult = await suppliersResponse.json();
+
+          if (!cancelled) {
+            setSuppliers(
+              (suppliersResult.data ?? []).map(
+                (supplier: {
+                  supplierId: string;
+                  companyName: string;
+                }) => ({
+                  supplierId: supplier.supplierId,
+                  companyName: supplier.companyName,
+                })
+              )
+            );
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load products:", error);
+
+        if (!cancelled) {
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load products."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initializeProducts();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
 
   const filteredProducts = products.filter(
     (product) => {

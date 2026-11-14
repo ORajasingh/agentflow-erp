@@ -14,6 +14,7 @@ import aiRoutes from "./routes/ai.routes.js";
 import aiChatRoutes from "./routes/ai-chat.routes.js";
 import knowledgeRoutes from "./routes/knowledge.routes.js";
 import authRoutes from "./routes/auth.routes.js";
+import procurementConfirmRoutes from "./routes/procurement-confirm.routes.js";
 
 const app = express();
 
@@ -37,6 +38,10 @@ app.use("/api/suppliers", supplierRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/ai/chat", aiChatRoutes);
 app.use("/api/ai", aiRoutes);
+app.use(
+  "/api/ai/procurement",
+  procurementConfirmRoutes
+);
 app.use(
   "/api/knowledge",
   knowledgeRoutes

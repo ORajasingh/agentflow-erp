@@ -127,7 +127,69 @@ export default function FinancePage() {
   };
 
   useEffect(() => {
-    fetchFinance();
+    const controller = new AbortController();
+
+    const loadFinance = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [transactionsResponse, summaryResponse] =
+          await Promise.all([
+            fetch(`${API_URL}/api/finance`, {
+              cache: "no-store",
+              signal: controller.signal,
+            }),
+            fetch(`${API_URL}/api/finance/summary`, {
+              cache: "no-store",
+              signal: controller.signal,
+            }),
+          ]);
+
+        if (!transactionsResponse.ok) {
+          throw new Error("Failed to fetch transactions");
+        }
+
+        if (!summaryResponse.ok) {
+          throw new Error("Failed to fetch summary");
+        }
+
+        const transactionsData =
+          await transactionsResponse.json();
+
+        const summaryData = await summaryResponse.json();
+
+        setTransactions(transactionsData.data || []);
+        setSummary(
+          summaryData.data || {
+            totalIncome: 0,
+            totalExpense: 0,
+            netProfit: 0,
+            pendingIncome: 0,
+            pendingExpense: 0,
+            transactionCount: 0,
+          }
+        );
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          err.name === "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(err);
+        setError("Unable to connect to the Finance API.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadFinance();
+
+    return () => controller.abort();
   }, []);
 
   const handleSubmit = async (

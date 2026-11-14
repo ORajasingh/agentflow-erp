@@ -393,6 +393,55 @@ router.patch(
 });
 
 /**
+
+PATCH /api/purchase-orders//reject
+
+Reject a pending purchase order
+*/
+router.patch(
+  "/:id/reject",
+authenticateToken,
+requireRole("admin", "manager"),
+async (req, res) => {
+try {
+const order = await PurchaseOrder.findById(req.params.id);
+
+if (!order) {
+res.status(404).json({
+success: false,
+message: "Purchase order not found.",
+});
+return;
+}
+
+if (order.status !== "Pending") {
+res.status(400).json({
+success: false,
+message: "Only pending purchase orders can be rejected.",
+});
+return;
+}
+
+order.status = "Cancelled";
+await order.save();
+
+res.json({
+success: true,
+message: "Purchase order rejected successfully.",
+data: order,
+});
+} catch (error) {
+console.error("Failed to reject purchase order:", error);
+
+res.status(500).json({
+success: false,
+message: "Failed to reject purchase order.",
+});
+}
+}
+);
+
+/**
  * PATCH /api/purchase-orders/:id/order
  * Mark purchase order as ordered
  */

@@ -30,7 +30,7 @@ export default function Topbar() {
     }
 
     // Full browser navigation after the cookie is cleared.
-    window.location.assign("/login");
+    router.push("/login");
   } catch (error) {
     console.error("Logout error:", error);
 

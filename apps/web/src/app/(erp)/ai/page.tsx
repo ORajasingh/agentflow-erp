@@ -152,6 +152,26 @@ type PendingAction = {
 
 };
 
+type ChatProcurement = {
+
+  pendingProcurementId: string;
+
+  productName: string;
+
+  sku: string;
+
+  quantity: number;
+
+  supplierName: string;
+
+  unitCost: number;
+
+  totalAmount: number;
+
+  requiresApproval?: boolean;
+
+};
+
 const agentInfo: Record<
 
   AgentName,
@@ -233,25 +253,76 @@ const allAgents: AgentName[] = [
 ];
 
 export default function AICommandCenterPage() {
+
     const [sessionId, setSessionId] = useState("");
 
   useEffect(() => {
+
     const storageKey = "agentflow_ai_session_id";
+
     const storedSessionId = window.localStorage.getItem(storageKey);
 
     if (
+
       storedSessionId &&
+
       /^[a-zA-Z0-9_-]{8,100}$/.test(storedSessionId)
+
     ) {
+
       setSessionId(storedSessionId);
+
       return;
+
     }
 
     const newSessionId = crypto.randomUUID();
 
     window.localStorage.setItem(storageKey, newSessionId);
+
     setSessionId(newSessionId);
+
   }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+
+    async function loadConversation() {
+      setHistoryLoaded(false);
+      try {
+        const response = await fetch(
+          `${API_URL}/api/ai/chat?sessionId=${encodeURIComponent(sessionId)}`,
+          { cache: "no-store" }
+        );
+        const result = await response.json();
+        console.log("AI PROCUREMENT DEBUG:", result);
+        if (!response.ok || !result.success) {
+          throw new Error(result.message || "Failed to load conversation history.");
+        }
+        if (!cancelled) {
+          setMessages(
+            Array.isArray(result.data?.messages)
+              ? result.data.messages.map((item: { role: string; content: string }) => ({
+                  role: item.role === "assistant" ? "assistant" as const : "user" as const,
+                  content: item.content,
+                }))
+              : []
+          );
+        }
+      } catch (error) {
+        console.error("Conversation history loading failed:", error);
+      } finally {
+        if (!cancelled) setHistoryLoaded(true);
+      }
+    }
+
+    void loadConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   const [message, setMessage] = useState("");
 
@@ -260,6 +331,8 @@ export default function AICommandCenterPage() {
     []
 
   );
+
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -279,12 +352,22 @@ export default function AICommandCenterPage() {
 
     useState(false);
 
+    const [chatProcurement, setChatProcurement] =
+
+  useState<ChatProcurement | null>(null);
+
+const [chatProcurementLoading, setChatProcurementLoading] =
+
+  useState(false);
+
   const sendMessage = async (text?: string) => {
 
     const value = (text ?? message).trim();
 
-   if (!value || loading || actionLoading || !sessionId) {
+   if (!value || loading || actionLoading || !sessionId || !historyLoaded) {
+
   return;
+
 }
 
     const previousHistory = [...messages];
@@ -329,21 +412,7 @@ export default function AICommandCenterPage() {
 
             message: value,
 
-            body: JSON.stringify({
-  message: value,
-  sessionId,
-  history: previousHistory
-    .filter(
-      (item) =>
-        item.role === "user" ||
-        item.role === "assistant"
-    )
-    .slice(-10)
-    .map((item) => ({
-      role: item.role === "assistant" ? "model" : "user",
-      content: item.content,
-    })),
-}),
+            sessionId,
 
             history: previousHistory
 
@@ -380,6 +449,18 @@ export default function AICommandCenterPage() {
       );
 
       const result = await response.json();
+
+      console.log(
+  "ACTUAL AI CHAT RESPONSE:",
+  JSON.stringify(result, null, 2)
+);
+
+console.log("PROCUREMENT ACTION:", result.data?.action);
+
+console.log(
+  "PROCUREMENT ACTION RESULT:",
+  result.data?.actionResult
+);
 
       if (!response.ok || !result.success) {
 
@@ -423,9 +504,54 @@ export default function AICommandCenterPage() {
 
        */
 
-      const agentData =
+      
+const agentData = result.data?.agentData;
+const actionResult = result.data?.actionResult;
 
-        result.data?.agentData;
+
+if (actionResult?.pendingProcurementId) {
+  const resolution = actionResult.details;
+
+  const product = resolution?.product;
+  const supplier = resolution?.supplier;
+  const quantity = Number(product?.quantity);
+  const unitCost = Number(product?.price);
+  const totalAmount = Number(resolution?.totalAmount);
+
+  if (
+    typeof product?.name === "string" &&
+    typeof product?.sku === "string" &&
+    typeof supplier?.name === "string" &&
+    Number.isSafeInteger(quantity) &&
+    quantity > 0 &&
+    Number.isFinite(unitCost) &&
+    unitCost > 0 &&
+    Number.isFinite(totalAmount) &&
+    totalAmount > 0
+  ) {
+    setChatProcurement({
+      pendingProcurementId: actionResult.pendingProcurementId,
+      productName: product.name,
+      sku: product.sku,
+      quantity,
+      supplierName: supplier.name,
+      unitCost,
+      totalAmount,
+      requiresApproval: Boolean(resolution?.requiresApproval),
+    });
+  } else {
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content:
+          "The procurement request was saved, but its confirmation details are incomplete. No purchase order has been created.",
+      },
+    ]);
+  }
+}
+
+
 
       if (
 
@@ -538,168 +664,402 @@ export default function AICommandCenterPage() {
   };
 
   /*
+
    * Confirm and create a purchase order only when the assigned supplier
+
    * can be matched to an active supplier record.
+
    */
+
+const confirmChatProcurement = async () => {
+
+  if (!chatProcurement || !sessionId || chatProcurementLoading) {
+
+    return;
+
+  }
+
+  setChatProcurementLoading(true);
+
+  try {
+
+    const response = await fetch(
+
+      `/api/ai/procurement/${chatProcurement.pendingProcurementId}/confirm`,
+
+      {
+
+        method: "POST",
+
+        credentials: "same-origin",
+
+        headers: {
+
+          "Content-Type": "application/json",
+
+        },
+
+        body: JSON.stringify({ sessionId }),
+
+        cache: "no-store",
+
+      }
+
+    );
+
+    const result = await response.json();
+    console.log(
+  "AI CHAT RESPONSE:",
+  JSON.stringify(result, null, 2)
+);
+
+    if (!response.ok || !result.success) {
+
+      throw new Error(
+
+        result.message || "Purchase order confirmation failed."
+
+      );
+
+    }
+
+    const order = result.data?.purchaseOrder;
+
+    setMessages((previous) => [
+
+      ...previous,
+
+      {
+
+        role: "assistant",
+
+        content: [
+
+          result.data?.alreadyConfirmed
+
+            ? "This procurement was already confirmed."
+
+            : "Purchase order created successfully.",
+
+          `Purchase Order: ${order?.orderNumber ?? "Created"}`,
+
+          `Supplier: ${order?.supplierName ?? chatProcurement.supplierName}`,
+
+          `Total: ₹${Number(
+
+            order?.totalAmount ?? chatProcurement.totalAmount
+
+          ).toLocaleString("en-IN")}`,
+
+          `Status: ${order?.status ?? "Pending"}`,
+
+          result.data?.requiresApproval
+
+            ? "Approval is required."
+
+            : "The purchase order is awaiting approval.",
+
+        ].join("\n"),
+
+      },
+
+    ]);
+
+    setChatProcurement(null);
+
+  } catch (error) {
+
+    setMessages((previous) => [
+
+      ...previous,
+
+      {
+
+        role: "assistant",
+
+        content: `Purchase order not confirmed.\n${
+
+          error instanceof Error
+
+            ? error.message
+
+            : "An unexpected error occurred."
+
+        }`,
+
+      },
+
+    ]);
+
+  } finally {
+
+    setChatProcurementLoading(false);
+
+  }
+
+};
+
+  /*
+
+   * Cancel pending action.
+
+   */
+
+  /*
+
+   * Confirm and create a purchase order for the existing low-stock workflow.
+
+   * Keep this separate from chat-based procurement confirmation.
+
+   */
+
   const confirmPurchaseOrder = async () => {
-    if (
-      !pendingAction ||
-      pendingAction.type !== "CREATE_PURCHASE_ORDER"
-    ) {
+
+    if (!pendingAction || pendingAction.type !== "CREATE_PURCHASE_ORDER") {
+
       return;
+
     }
 
     const draft = pendingAction.draft;
 
     if (!draft.products?.length) {
+
       setMessages((previous) => [
+
         ...previous,
+
         {
+
           role: "assistant",
+
           content: "No products were found for this purchase order.",
+
         },
+
       ]);
+
       setPendingAction(null);
+
       return;
+
     }
 
     setActionLoading(true);
 
     try {
-      // Never select a supplier by rating or list order.
+
       const supplierNames = draft.products.map(
+
         (product) => product.supplier?.trim() ?? ""
+
       );
 
       if (supplierNames.some((name) => !name)) {
+
         throw new Error(
+
           "One or more products have no assigned supplier. Verify the product supplier information before creating this order."
+
         );
+
       }
 
       const uniqueSupplierNames = [
+
         ...new Set(supplierNames.map((name) => name.toLowerCase())),
+
       ];
 
       if (uniqueSupplierNames.length !== 1) {
+
         throw new Error(
+
           "These products have different assigned suppliers. Create separate purchase orders for each supplier."
+
         );
+
       }
 
       if (!draft.suppliers?.length) {
+
         throw new Error(
+
           "No active supplier records were returned. Verify the supplier data before creating this purchase order."
+
         );
+
       }
 
       const expectedSupplierName = supplierNames[0];
+
       const supplier = draft.suppliers.find(
+
         (item) =>
+
           item.status.trim().toLowerCase() === "active" &&
+
           item.companyName.trim().toLowerCase() ===
+
             expectedSupplierName.toLowerCase()
+
       );
 
       if (!supplier) {
+
         throw new Error(
+
           `The assigned supplier "${expectedSupplierName}" could not be matched to an active supplier record. No purchase order was created.`
+
         );
+
       }
 
       const items = draft.products.map((product) => {
+
         const quantity = Number(product.suggestedQuantity);
+
         const unitPrice = Number(product.costPrice ?? product.unitPrice);
 
         if (
+
           !product.productId ||
-          !Number.isInteger(quantity) ||
+
+          !Number.isSafeInteger(quantity) ||
+
           quantity <= 0 ||
+
           !Number.isFinite(unitPrice) ||
+
           unitPrice <= 0
+
         ) {
+
           throw new Error(
+
             `Invalid product, quantity, or cost for "${product.name}".`
+
           );
+
         }
 
         return {
+
           productId: product.productId,
+
           quantity,
+
           unitPrice,
+
         };
+
       });
 
-      const response = await fetch(`${API_URL}/api/purchase-orders`, {
+      const response = await fetch("/api/purchase-orders", {
+
         method: "POST",
+
         headers: {
+
           "Content-Type": "application/json",
+
         },
+
         body: JSON.stringify({
+
           supplierId: supplier.id,
+
           items,
+
           tax: 0,
+
         }),
+
       });
 
       const result = await response.json();
 
+      console.log(
+  "AI PROCUREMENT DEBUG:",
+  JSON.stringify(result, null, 2)
+);
+
       if (!response.ok || !result.success) {
+
         throw new Error(
+
           result.message || "Failed to create purchase order."
+
         );
+
       }
 
       const order = result.data;
 
       setMessages((previous) => [
+
         ...previous,
+
         {
+
           role: "assistant",
+
           content: `Purchase order created successfully.
 
-Purchase Order: ${
-            order?.orderNumber ?? "Created"
-          }
-Supplier: ${
-            order?.supplierName ?? supplier.companyName
-          }
+Purchase Order: ${order?.orderNumber ?? "Created"}
+
+Supplier: ${order?.supplierName ?? supplier.companyName}
+
 Products: ${draft.products.length}
-Total Amount: ₹${Number(
-            order?.totalAmount ?? 0
-          ).toLocaleString("en-IN")}
+
+Total Amount: ₹${Number(order?.totalAmount ?? 0).toLocaleString("en-IN")}
+
 Status: ${order?.status ?? "Pending"}`,
+
         },
+
       ]);
 
       setPendingAction(null);
+
     } catch (error) {
+
       console.error("Purchase order action error:", error);
 
       const errorMessage =
+
         error instanceof Error
+
           ? error.message
+
           : "Failed to create purchase order.";
 
       setMessages((previous) => [
+
         ...previous,
+
         {
+
           role: "assistant",
+
           content: `Purchase order not created.
 
 ${errorMessage}`,
+
         },
+
       ]);
 
       setPendingAction(null);
+
     } finally {
+
       setActionLoading(false);
+
     }
+
   };
 
-  /*
-   * Cancel pending action.
-   */
   const cancelAction = () => {
 
     setPendingAction(null);
@@ -863,18 +1223,25 @@ ${errorMessage}`,
                 type="button"
 
                 onClick={() => {
+
   setMessages([]);
+
   setLastAgent(null);
+
   setPendingAction(null);
 
   const newSessionId = crypto.randomUUID();
 
   window.localStorage.setItem(
+
     "agentflow_ai_session_id",
+
     newSessionId
+
   );
 
   setSessionId(newSessionId);
+
 }}
 
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 transition hover:bg-slate-900 hover:text-slate-300"
@@ -1091,6 +1458,200 @@ ${errorMessage}`,
 
             </div>
 
+            {chatProcurement && (
+
+  <div className="border-t border-violet-900/40 bg-violet-950/10 p-4">
+
+    <div className="rounded-2xl border border-violet-900/50 bg-slate-950 p-5">
+
+      <div className="flex items-start gap-3">
+
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-950 text-violet-400">
+
+          <Package size={20} />
+
+        </div>
+
+        <div>
+
+          <h3 className="text-sm font-semibold text-white">
+
+            Confirm AI Procurement
+
+          </h3>
+
+          <p className="mt-1 text-xs text-slate-500">
+
+            Review these details before creating the purchase order.
+
+          </p>
+
+        </div>
+
+      </div>
+
+      <div className="mt-5 space-y-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+
+        <div className="flex justify-between gap-4 text-sm">
+
+          <span className="text-slate-500">Product</span>
+
+          <span className="text-right text-white">
+
+            {chatProcurement.productName}
+
+          </span>
+
+        </div>
+
+        <div className="flex justify-between gap-4 text-sm">
+
+          <span className="text-slate-500">SKU</span>
+
+          <span className="text-right text-slate-300">
+
+            {chatProcurement.sku}
+
+          </span>
+
+        </div>
+
+        <div className="flex justify-between gap-4 text-sm">
+
+          <span className="text-slate-500">Supplier</span>
+
+          <span className="text-right text-slate-300">
+
+            {chatProcurement.supplierName}
+
+          </span>
+
+        </div>
+
+        <div className="flex justify-between gap-4 text-sm">
+
+          <span className="text-slate-500">Quantity</span>
+
+          <span className="text-white">
+
+            {chatProcurement.quantity}
+
+          </span>
+
+        </div>
+
+        <div className="flex justify-between gap-4 text-sm">
+
+          <span className="text-slate-500">Unit cost</span>
+
+          <span className="text-white">
+
+            ₹{chatProcurement.unitCost.toLocaleString("en-IN")}
+
+          </span>
+
+        </div>
+
+        <div className="flex justify-between gap-4 border-t border-slate-800 pt-3 text-sm">
+
+          <span className="font-medium text-slate-400">
+
+            Total amount
+
+          </span>
+
+          <span className="font-semibold text-violet-400">
+
+            ₹{chatProcurement.totalAmount.toLocaleString("en-IN")}
+
+          </span>
+
+        </div>
+
+      </div>
+
+      <p className="mt-3 text-xs text-slate-500">
+
+        Confirmation creates a purchase order in Pending status.
+
+        Approval remains a separate step.
+
+      </p>
+
+      <div className="mt-4 flex gap-3">
+
+        <button
+
+          type="button"
+
+          onClick={confirmChatProcurement}
+
+          disabled={chatProcurementLoading || actionLoading}
+
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+
+        >
+
+          {chatProcurementLoading ? (
+
+            <Loader2 size={15} className="animate-spin" />
+
+          ) : (
+
+            <Check size={15} />
+
+          )}
+
+          {chatProcurementLoading ? "Confirming..." : "Confirm Purchase Order"}
+
+        </button>
+
+        <button
+
+          type="button"
+
+          disabled={chatProcurementLoading}
+
+          onClick={() => {
+
+            setChatProcurement(null);
+
+            setMessages((previous) => [
+
+              ...previous,
+
+              {
+
+                role: "assistant",
+
+                content:
+
+                  "Procurement confirmation dismissed. No purchase order was created by this action.",
+
+              },
+
+            ]);
+
+          }}
+
+          className="flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-3 text-xs font-semibold text-slate-400 hover:bg-slate-900 disabled:opacity-50"
+
+        >
+
+          <X size={15} />
+
+          Cancel
+
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
+
             {/* Purchase Order Confirmation */}
 
             {pendingAction?.type ===
@@ -1264,11 +1825,17 @@ ${errorMessage}`,
                       <span className="font-medium text-white">
 
                         {[
+
                           ...new Set(
+
                             pendingAction.draft.products
+
                               .map((product) => product.supplier?.trim())
+
                               .filter((name): name is string => Boolean(name))
+
                           ),
+
                         ].join(", ") || "Supplier must be verified"}
 
                       </span>

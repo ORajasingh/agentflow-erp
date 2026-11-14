@@ -59,13 +59,13 @@ export async function resolvePurchaseOrder(
   }
 
   // 3. Find an active product
-  const product = await Product.findOne({
-    name: {
-      $regex: escapeRegex(cleanProductName),
-      $options: "i",
-    },
-    isActive: true,
-  });
+ const product = await Product.findOne({
+  name: {
+    $regex: `^${escapeRegex(cleanProductName)}$`,
+    $options: "i",
+  },
+  isActive: true,
+});
 
   if (!product) {
     return {

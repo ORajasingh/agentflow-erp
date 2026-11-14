@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -108,33 +108,22 @@ const [productForm, setProductForm] = useState({
   const [adjustmentError, setAdjustmentError] =
     useState("");
 
-  async function fetchProducts() {
+  const fetchProducts = useCallback(async () => {
     try {
-      setLoading(true);
-      setError("");
+     const response = await fetch(`${API_URL}/api/products`, {
+  cache: "no-store",
+});
 
-      const response = await fetch(
-        `${API_URL}/api/products`,
-        {
-          cache: "no-store",
-        }
-      );
+setLoading(true);
+setError("");
 
-      if (!response.ok) {
-        throw new Error(
-          "Failed to fetch products"
-        );
-      }
-
+if (!response.ok) {
+  throw new Error("Failed to fetch products");
+}
       const result = await response.json();
-
       setProducts(result.data ?? []);
     } catch (err) {
-      console.error(
-        "Failed to fetch products:",
-        err
-      );
-
+      console.error("Failed to fetch products:", err);
       setError(
         err instanceof Error
           ? err.message
@@ -143,66 +132,25 @@ const [productForm, setProductForm] = useState({
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function fetchSuppliers() {
-  try {
-    const response = await fetch(
-      `${API_URL}/api/suppliers`,
-      {
-        cache: "no-store",
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch suppliers");
-    }
-
-    const result = await response.json();
-
-    if (result.success) {
-      setSuppliers(
-        result.data.filter(
-          (supplier: Supplier) =>
-            supplier.status === "Active"
-        )
-      );
-    }
-  } catch (error) {
-    console.error(
-      "Failed to fetch suppliers:",
-      error
-    );
-  }
-}
-
-  async function fetchMovements() {
+  const fetchMovements = useCallback(async () => {
     try {
       setMovementLoading(true);
       setMovementError("");
 
-      const response = await fetch(
-        `${API_URL}/api/stock-movements`,
-        {
-          cache: "no-store",
-        }
-      );
+      const response = await fetch(`${API_URL}/api/stock-movements`, {
+        cache: "no-store",
+      });
 
       if (!response.ok) {
-        throw new Error(
-          "Failed to fetch stock movements"
-        );
+        throw new Error("Failed to fetch stock movements");
       }
 
       const result = await response.json();
-
       setMovements(result.data ?? []);
     } catch (err) {
-      console.error(
-        "Failed to fetch stock movements:",
-        err
-      );
-
+      console.error("Failed to fetch stock movements:", err);
       setMovementError(
         err instanceof Error
           ? err.message
@@ -211,19 +159,57 @@ const [productForm, setProductForm] = useState({
     } finally {
       setMovementLoading(false);
     }
-  }
-
-  async function refreshInventory() {
-    await Promise.all([
-      fetchProducts(),
-      fetchMovements(),
-    ]);
-  }
-
-  useEffect(() => {
-    refreshInventory();
-    fetchSuppliers();
   }, []);
+
+  const refreshInventory = useCallback(async () => {
+    await Promise.all([fetchProducts(), fetchMovements()]);
+  }, [fetchProducts, fetchMovements]);
+
+ useEffect(() => {
+  async function loadInitialInventory() {
+    try {
+      const [productsResponse, movementsResponse, suppliersResponse] =
+        await Promise.all([
+          fetch(`${API_URL}/api/products`, { cache: "no-store" }),
+          fetch(`${API_URL}/api/stock-movements`, { cache: "no-store" }),
+          fetch(`${API_URL}/api/suppliers`, { cache: "no-store" }),
+        ]);
+
+      if (!productsResponse.ok) {
+        throw new Error("Failed to fetch products");
+      }
+
+      if (!movementsResponse.ok) {
+        throw new Error("Failed to fetch stock movements");
+      }
+
+      const productsResult = await productsResponse.json();
+      const movementsResult = await movementsResponse.json();
+      const suppliersResult = await suppliersResponse.json();
+
+      setProducts(productsResult.data ?? []);
+      setMovements(movementsResult.data ?? []);
+
+      if (suppliersResult.success && Array.isArray(suppliersResult.data)) {
+        setSuppliers(
+          suppliersResult.data.filter(
+            (supplier: Supplier) => supplier.status === "Active"
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Failed to load inventory:", error);
+      setError(
+        error instanceof Error ? error.message : "Failed to load inventory"
+      );
+    } finally {
+      setLoading(false);
+      setMovementLoading(false);
+    }
+  }
+
+  void loadInitialInventory();
+}, []);
 
   async function handleAdjustment() {
     if (!adjustingProduct) {

@@ -46,7 +46,7 @@ export default function Dashboard() {
           </h2>
 
           <p className="mt-2 text-sm text-slate-500">
-            Here's what's happening across your enterprise today.
+            Here&apos;s what&apos;s happening across your enterprise today.
           </p>
         </div>
 

@@ -86,15 +86,17 @@ export function detectAgent(message: string): AgentName {
 export function detectAction(message: string): DetectedAction {
   const text = message.toLowerCase().trim();
 
+  // Questions about procurement should remain read-only unless
+  // the user explicitly requests a purchase action.
   if (
     /^(how|what|why|when|where|explain|tell me about)\b/.test(text) &&
-    !/\b(buy|order|purchase|procure)\s+\d+\b/.test(text)
+    !/\b(buy|order|purchase|procure|prepare|raise|create|place)\b/.test(text)
   ) {
     return { name: "none", confidence: "high" };
   }
 
   const explicitAction =
-    /\b(create|make|raise|generate|place)\s+(?:a\s+)?(?:purchase order|po)\b/.test(text);
+    /\b(?:create|make|raise|generate|place|prepare)\s+(?:(?:a|the)\s+)?(?:purchase\s+order|purchase\s+request|procurement\s+request|po)\b/.test(text);
 
   const buyingAction =
     /\b(?:buy|order|purchase|procure)\s+\d+\b/.test(text) ||
@@ -135,13 +137,13 @@ export function parsePurchaseRequest(
 ): ParsedPurchaseRequest {
   const text = message.trim();
 
-  const quantityFirst =
-    text.match(
-      /\b(?:buy|order|purchase|procure)\s+(?:me\s+)?(\d+)\s+(?:of\s+)?(.+?)(?:[.!?]+)?$/i
-    ) ??
-    text.match(
-      /\b(?:create|make|raise|generate|place)\s+(?:a\s+)?(?:purchase order|po)\s+for\s+(\d+)\s+(?:of\s+)?(.+?)(?:[.!?]+)?$/i
-    );
+ const quantityFirst =
+  text.match(
+    /\b(?:buy|order|purchase|procure)\s+(?:me\s+)?(\d+)\s+(?:(?:units?|pieces?|products?|items?)\s+of\s+|of\s+)?(.+?)(?:[.!?]+)?$/i
+  ) ??
+  text.match(
+    /\b(?:create|make|raise|generate|place)\s+(?:a\s+)?(?:purchase order|po)\s+for\s+(\d+)\s+(?:(?:units?|pieces?|products?|items?)\s+of\s+|of\s+)?(.+?)(?:[.!?]+)?$/i
+  );
 
   if (quantityFirst) {
     return {
@@ -278,6 +280,8 @@ export async function orchestrate(
 
   if (action.name === "create_purchase_order") {
     const parsed = parsePurchaseRequest(cleanMessage);
+    console.log("PROCUREMENT INPUT:", cleanMessage);
+console.log("PROCUREMENT PARSED:", parsed);
 
     if (!parsed.productName || !parsed.quantity) {
       actionResult = {
@@ -300,6 +304,11 @@ export async function orchestrate(
           parsed.productName,
           parsed.quantity
         );
+        
+        console.log(
+  "PROCUREMENT RESOLUTION:",
+  JSON.stringify(resolution, null, 2)
+);
 
         if (!resolution.resolved) {
           actionResult = {

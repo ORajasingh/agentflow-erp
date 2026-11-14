@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   Building2,
   Mail,
-  MapPin,
   Phone,
   Plus,
   Star,
@@ -78,12 +77,14 @@ export default function SuppliersPage() {
 
   async function loadSuppliers() {
     try {
-      setLoading(true);
-      setError("");
+      
 
       const response = await fetch(
         `${API_URL}/api/suppliers`
       );
+
+      setLoading(true);
+      setError("");
 
       if (!response.ok) {
         throw new Error(
@@ -105,9 +106,47 @@ export default function SuppliersPage() {
     }
   }
 
+  
   useEffect(() => {
-    loadSuppliers();
+    let cancelled = false;
+
+    async function initializeSuppliers() {
+      try {
+        const response = await fetch(`${API_URL}/api/suppliers`, {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch suppliers");
+        }
+
+        const result = await response.json();
+
+        if (!cancelled) {
+          setSuppliers(result.data ?? []);
+        }
+      } catch (error) {
+        console.error("Failed to load suppliers:", error);
+
+        if (!cancelled) {
+          setError(
+            "Unable to load suppliers. Make sure the API server is running."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initializeSuppliers();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
 
   const filteredSuppliers = suppliers.filter(
     (supplier) => {

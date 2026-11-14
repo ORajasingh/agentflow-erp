@@ -3,7 +3,6 @@
 import {
   AlertTriangle,
   CheckCircle2,
-  Clock3,
   Plus,
   ShoppingCart,
   X,
@@ -89,15 +88,16 @@ export default function SalesPage() {
 
   async function loadData() {
     try {
-      setLoading(true);
-      setError("");
-
+      
       const [ordersResponse, customersResponse, productsResponse] =
         await Promise.all([
           fetch(`${API_URL}/api/sales-orders`),
           fetch(`${API_URL}/api/customers`),
           fetch(`${API_URL}/api/products`),
         ]);
+
+        setLoading(true);
+      setError("");
 
       if (
         !ordersResponse.ok ||
@@ -123,9 +123,59 @@ export default function SalesPage() {
     }
   }
 
+  
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+
+    async function initializeSales() {
+      try {
+        const [ordersResponse, customersResponse, productsResponse] =
+          await Promise.all([
+            fetch(`${API_URL}/api/sales-orders`, { cache: "no-store" }),
+            fetch(`${API_URL}/api/customers`, { cache: "no-store" }),
+            fetch(`${API_URL}/api/products`, { cache: "no-store" }),
+          ]);
+
+        if (
+          !ordersResponse.ok ||
+          !customersResponse.ok ||
+          !productsResponse.ok
+        ) {
+          throw new Error("Failed to load sales data");
+        }
+
+        const [ordersResult, customersResult, productsResult] =
+          await Promise.all([
+            ordersResponse.json(),
+            customersResponse.json(),
+            productsResponse.json(),
+          ]);
+
+        if (!cancelled) {
+          setOrders(ordersResult.data ?? []);
+          setCustomers(customersResult.data ?? []);
+          setProducts(productsResult.data ?? []);
+        }
+      } catch (error) {
+        console.error("Sales data error:", error);
+
+        if (!cancelled) {
+          setError("Unable to load sales data");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initializeSales();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
 
   // --------------------------------------------------
   // Selected product
